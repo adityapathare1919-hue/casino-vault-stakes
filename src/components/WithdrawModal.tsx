@@ -26,7 +26,7 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
 }) => {
   const [selectedCrypto, setSelectedCrypto] = useState<CryptoSymbol>('USDT');
   const [destinationAddress, setDestinationAddress] = useState('');
-  const [amountUsd, setAmountUsd] = useState<number>(50);
+  const [amountUsd, setAmountUsd] = useState<number>(user.balanceUsd > 0 ? Number((user.balanceUsd).toFixed(2)) : 10);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -36,8 +36,7 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
   const currentPrice = prices[selectedCrypto] || config.currentPriceUsd;
 
   const cryptoEquivalent = currentPrice > 0 ? amountUsd / currentPrice : 0;
-  const networkFeeUsd = selectedCrypto === 'ETH' ? 3.5 : selectedCrypto === 'BTC' ? 2.5 : selectedCrypto === 'SOL' ? 0.2 : 1.0;
-  const netUsd = Math.max(0, amountUsd - networkFeeUsd);
+  const netUsd = amountUsd;
   const netCrypto = currentPrice > 0 ? netUsd / currentPrice : 0;
 
   if (!isOpen) return null;
@@ -57,8 +56,8 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
       setErrorMsg('Please enter your destination wallet address.');
       return;
     }
-    if (amountUsd < 10) {
-      setErrorMsg('Minimum withdrawal amount is $10.00 USD.');
+    if (amountUsd <= 0) {
+      setErrorMsg('Please enter a valid withdrawal amount.');
       return;
     }
     if (amountUsd > user.balanceUsd) {
@@ -184,7 +183,7 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
               <input
                 type="number"
                 id="withdraw-amount-usd-input"
-                min="10"
+                min="0.01"
                 max={user.balanceUsd}
                 step="0.01"
                 value={amountUsd}
@@ -211,12 +210,12 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
           {/* Breakdown Summary */}
           <div className="p-3.5 rounded-2xl bg-[#050b18] border border-[#c0c0c0]/20 space-y-2 text-xs font-mono">
             <div className="flex items-center justify-between text-[#c0c0c0]">
-              <span>Gross Withdrawal:</span>
+              <span>Withdrawal Amount:</span>
               <span className="text-white font-bold">{formatCryptoAmount(cryptoEquivalent, selectedCrypto)} {selectedCrypto} ({formatUsd(amountUsd)})</span>
             </div>
             <div className="flex items-center justify-between text-[#c0c0c0]">
-              <span>Network Gas Fee:</span>
-              <span className="text-amber-400 font-bold">{formatUsd(networkFeeUsd)}</span>
+              <span>Minimum Limit:</span>
+              <span className="text-[#00ff41] font-bold">No Minimum ($0.00)</span>
             </div>
             <div className="border-t border-[#c0c0c0]/15 pt-2 flex items-center justify-between font-bold">
               <span className="text-white">You Receive:</span>

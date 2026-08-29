@@ -1818,8 +1818,8 @@ async function handleTelegramUpdate(update: any) {
         const destAddrParam = parts[3];
         const validSymbols = ['USDT', 'BTC', 'ETH', 'LTC', 'SOL'];
 
-        if (isNaN(amountUsdParam) || amountUsdParam < 10) {
-          replyText = `❌ *Invalid Withdrawal Amount*\n\nMinimum withdrawal is *$10.00 USD*.\nUsage: \`/withdraw <amount_usd> <crypto> <address>\`\nExample: \`/withdraw 50 USDT 0x71C...42f8\``;
+        if (isNaN(amountUsdParam) || amountUsdParam <= 0) {
+          replyText = `❌ *Invalid Withdrawal Amount*\n\nUsage: \`/withdraw <amount_usd> <crypto> <address>\`\nExample: \`/withdraw 5 LTC ltc1q...\``;
           replyKeyboard = [[{ text: '🚀 Open Mini App Withdraw Modal', web_app: { url: `${getAppUrl()}?action=withdraw` } }]];
         } else if (!validSymbols.includes(symbolParam)) {
           replyText = `❌ *Unsupported Cryptocurrency*\n\nSupported: \`USDT\`, \`BTC\`, \`ETH\`, \`LTC\`, \`SOL\``;
@@ -1832,8 +1832,7 @@ async function handleTelegramUpdate(update: any) {
           ];
         } else {
           const rate = cryptoPrices[symbolParam] || 1.0;
-          const networkFee = symbolParam === 'ETH' ? 3.5 : symbolParam === 'BTC' ? 2.5 : symbolParam === 'SOL' ? 0.2 : 1.0;
-          const netUsd = Math.max(0, amountUsdParam - networkFee);
+          const netUsd = amountUsdParam;
           const netCrypto = Number((netUsd / rate).toFixed(6));
 
           user.balanceUsd = Number((user.balanceUsd - amountUsdParam).toFixed(2));
@@ -1864,7 +1863,6 @@ async function handleTelegramUpdate(update: any) {
 
           replyText = `✅ *Withdrawal Successfully Dispatched!* ⚡\n\n` +
             `• *Payout:* ${netCrypto} ${symbolParam} ($${netUsd.toFixed(2)} USD)\n` +
-            `• *Network Fee:* $${networkFee.toFixed(2)} USD\n` +
             `• *Destination:* \`${destAddrParam}\`\n` +
             `• *Tx Hash:* \`${txHash.substring(0, 22)}...\`\n` +
             `• *New Balance:* *$${user.balanceUsd.toFixed(2)} USD*\n\n` +
