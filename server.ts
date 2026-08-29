@@ -286,14 +286,11 @@ app.get('/api/prices', async (req, res) => {
   });
 });
 
-// 2. Crypto Prices & Parent Wallet Config
+// 2. Crypto Prices & Vault Derivation Config
 app.get('/api/config', (req, res) => {
   res.json({
     prices: cryptoPrices,
     lastUpdated: lastPriceUpdate,
-    masterSeedPhrase: MASTER_SEED_PHRASE,
-    masterParentAddresses: PARENT_ADDRESSES,
-    mnemonicHint: '12-word BIP-39 Vault Stakes Master HD seed active',
     derivationFormat: "BIP44/BIP84 (BTC: m/84'/0'/0'/0/{id}, ETH/USDT: m/44'/60'/0'/0/{id}, LTC: m/84'/2'/0'/0/{id}, SOL: m/44'/501'/{id}'/0')",
   });
 });

@@ -12,13 +12,11 @@ export const api = {
     return res.json();
   },
 
-  // Fetch app config (prices, master seed, parent addresses)
+  // Fetch app config
   async getConfig(): Promise<{
     prices: Record<CryptoSymbol, number>;
-    masterSeedPhrase?: string;
-    masterParentAddresses: Record<CryptoSymbol, string>;
-    mnemonicHint: string;
-    derivationFormat: string;
+    lastUpdated?: string;
+    derivationFormat?: string;
   }> {
     const res = await fetch('/api/config');
     if (!res.ok) throw new Error('Failed to fetch config');
