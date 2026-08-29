@@ -210,13 +210,13 @@ const bets: Array<any> = [];
 const activeMinesGames: Map<string, any> = new Map();
 const activeTowersGames: Map<string, any> = new Map();
 
-// House Cold/Parent Vault Balances (managed by Admin Bot)
+// House Cold/Parent Vault Balances (managed by Admin Bot - starts at 0.0, updated strictly by genuine deposits & admin actions)
 let houseVaultBalances: Record<string, number> = {
-  BTC: 1.5,
-  ETH: 15.0,
-  LTC: 120.0,
-  SOL: 85.0,
-  USDT: 50000.0,
+  BTC: 0.0,
+  ETH: 0.0,
+  LTC: 0.0,
+  SOL: 0.0,
+  USDT: 0.0,
 };
 
 // Dynamic authorized admin telegram IDs set
@@ -351,7 +351,104 @@ function verifyAddressInHierarchy(addressToCheck: string): {
   return { isVerified: false, isParentMaster: false };
 }
 
-// Helper to derive child address on server using real cryptographic HD derivation
+// Helper to fetch live on-chain balances for house parent master cold vault
+async function getLiveParentVaultBalances(): Promise<{ balances: Record<string, number>; totalUsd: number; breakdown: Record<string, { balance: number; usdValue: number; address: string; onChainVerified: boolean }> }> {
+  const resultBalances: Record<string, number> = { ...houseVaultBalances };
+  const breakdown: Record<string, { balance: number; usdValue: number; address: string; onChainVerified: boolean }> = {};
+  let totalUsd = 0;
+
+  for (const sym of ['BTC', 'ETH', 'LTC', 'SOL', 'USDT']) {
+    const parentAddr = PARENT_ADDRESSES[sym as keyof typeof PARENT_ADDRESSES] || '';
+    let liveBal = houseVaultBalances[sym] || 0;
+    let verifiedOnChain = false;
+
+    if (parentAddr) {
+      try {
+        if (sym === 'LTC') {
+          const res = await fetch(`https://litecoinspace.org/api/address/${parentAddr}`, { signal: AbortSignal.timeout(4000) });
+          if (res.ok) {
+            const data: any = await res.json();
+            const funded = Number(data.chain_stats?.funded_txo_sum || 0) - Number(data.chain_stats?.spent_txo_sum || 0);
+            const onChainBal = funded / 1e8;
+            if (onChainBal >= 0) {
+              liveBal = Number(Math.max(liveBal, onChainBal).toFixed(6));
+              verifiedOnChain = true;
+            }
+          }
+        } else if (sym === 'BTC') {
+          const res = await fetch(`https://mempool.space/api/address/${parentAddr}`, { signal: AbortSignal.timeout(4000) });
+          if (res.ok) {
+            const data: any = await res.json();
+            const funded = Number(data.chain_stats?.funded_txo_sum || 0) - Number(data.chain_stats?.spent_txo_sum || 0);
+            const onChainBal = funded / 1e8;
+            if (onChainBal >= 0) {
+              liveBal = Number(Math.max(liveBal, onChainBal).toFixed(6));
+              verifiedOnChain = true;
+            }
+          }
+        } else if (sym === 'ETH') {
+          const res = await fetch('https://eth.llamarpc.com', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'eth_getBalance',
+              params: [parentAddr, 'latest'],
+            }),
+            signal: AbortSignal.timeout(4000),
+          });
+          if (res.ok) {
+            const data: any = await res.json();
+            if (data.result) {
+              const wei = BigInt(data.result);
+              const onChainBal = Number(wei) / 1e18;
+              liveBal = Number(Math.max(liveBal, onChainBal).toFixed(6));
+              verifiedOnChain = true;
+            }
+          }
+        } else if (sym === 'SOL') {
+          const res = await fetch('https://api.mainnet-beta.solana.com', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'getBalance',
+              params: [parentAddr],
+            }),
+            signal: AbortSignal.timeout(4000),
+          });
+          if (res.ok) {
+            const data: any = await res.json();
+            if (data.result?.value !== undefined) {
+              const onChainBal = Number(data.result.value) / 1e9;
+              liveBal = Number(Math.max(liveBal, onChainBal).toFixed(6));
+              verifiedOnChain = true;
+            }
+          }
+        }
+      } catch (err) {
+        // Fallback to tracked ledger balance
+      }
+    }
+
+    resultBalances[sym] = liveBal;
+    houseVaultBalances[sym] = liveBal;
+    const rate = cryptoPrices[sym] || 1.0;
+    const usdVal = Number((liveBal * rate).toFixed(2));
+    totalUsd += usdVal;
+
+    breakdown[sym] = {
+      balance: liveBal,
+      usdValue: usdVal,
+      address: parentAddr,
+      onChainVerified: verifiedOnChain,
+    };
+  }
+
+  return { balances: resultBalances, totalUsd: Number(totalUsd.toFixed(2)), breakdown };
+}
 function deriveChildAddressServer(symbol: string, userId: string | number, index: number = 0): string {
   const seed = getSeedBytes(MASTER_SEED_PHRASE);
   const childIndex = Math.max(1, index + 1);
@@ -2197,18 +2294,14 @@ async function handleAdminBotUpdate(update: any, tokenOverride?: string) {
         }
       }
     } else if (cmd === '/house' || cmd === '/vault') {
-      let totalUsd = 0;
+      const liveData = await getLiveParentVaultBalances();
       let coinBreakdown = '';
-      for (const [sym, bal] of Object.entries(houseVaultBalances)) {
-        const rate = cryptoPrices[sym] || 1.0;
-        const usdVal = Number((bal * rate).toFixed(2));
-        totalUsd += usdVal;
-        const pAddr = PARENT_ADDRESSES[sym as keyof typeof PARENT_ADDRESSES] || 'N/A';
-        coinBreakdown += `\n• *${sym}:* \`${bal}\` ${sym} (*$${usdVal.toLocaleString('en-US', { minimumFractionDigits: 2 })}*)\n  Address: \`${pAddr}\``;
+      for (const [sym, info] of Object.entries(liveData.breakdown)) {
+        coinBreakdown += `\n• *${sym}:* \`${info.balance}\` ${sym} (*$${info.usdValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}*)\n  Address: \`${info.address}\` ${info.onChainVerified ? '🟢 (On-Chain Live)' : ''}`;
       }
 
       replyText = `🏦 *HOUSE MASTER COLD VAULT RESERVES*\n\n` +
-        `• *Total House Reserve:* *$${totalUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD*\n` +
+        `• *Total House Reserve:* *$${liveData.totalUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD*\n` +
         `• *Master Seed:* \`${MASTER_SEED_PHRASE.split(' ').map((w, i) => i < 2 || i > 9 ? w : '••••').join(' ')}\`\n` +
         coinBreakdown;
     } else if (cmd === '/deposit') {
@@ -2337,22 +2430,20 @@ async function handleAdminBotUpdate(update: any, tokenOverride?: string) {
         });
       }
     } else if (cmd === '/stats') {
-      let totalColdUsd = 0;
-      for (const [sym, bal] of Object.entries(houseVaultBalances)) {
-        totalColdUsd += bal * (cryptoPrices[sym] || 1.0);
-      }
+      const liveData = await getLiveParentVaultBalances();
+      const totalColdUsd = liveData.totalUsd;
       let totalLiability = 0;
       let totalWagered = 0;
       for (const u of users.values()) {
         totalLiability += u.balanceUsd;
         totalWagered += u.totalWageredUsd;
       }
-      const solvency = totalLiability > 0 ? (totalColdUsd / totalLiability) * 100 : 999;
+      const solvency = totalLiability > 0 ? (totalColdUsd / totalLiability) * 100 : (totalColdUsd > 0 ? 100 : 0);
 
       replyText = `📊 *CASINO FINANCIAL & AUDIT METRICS*\n\n` +
         `• *House Cold Reserves:* *$${totalColdUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD*\n` +
         `• *Player Balance Liability:* *$${totalLiability.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD*\n` +
-        `• *Solvency Ratio:* *${solvency.toFixed(1)}%* (100% Backed)\n` +
+        `• *Solvency Ratio:* *${solvency.toFixed(1)}%*\n` +
         `• *Total Volume Wagered:* *$${totalWagered.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD*\n` +
         `• *Registered Players:* ${users.size}\n` +
         `• *Total Bets Processed:* ${bets.length}\n` +
