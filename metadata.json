@@ -1,0 +1,6 @@
+{
+  "name": "Vault Stakes",
+  "description": "Telegram Bot & Mini App Casino featuring self-dependent multi-crypto HD child wallet deposits, automated sweeps, Mines & Towers games, and Provably Fair betting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

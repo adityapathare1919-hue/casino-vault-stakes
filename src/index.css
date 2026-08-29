@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    background-color: #050b18;
+    color: #ffffff;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+  }
+}
+
+/* Custom glow and cybernetic glass styling */
+.neon-glow-green {
+  box-shadow: 0 0 20px rgba(0, 255, 65, 0.35);
+}
+
+.neon-border-green {
+  border-color: #00ff41;
+  box-shadow: 0 0 12px rgba(0, 255, 65, 0.25);
+}
+
+.neon-text-green {
+  color: #00ff41;
+  text-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
+}
+
+/* Custom scrollbar for cyber gaming theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #050b18;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1a2b4b;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #00ff41;
+}
