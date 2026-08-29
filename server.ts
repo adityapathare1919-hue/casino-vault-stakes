@@ -674,7 +674,10 @@ let telegramBotToken = process.env.TELEGRAM_BOT_TOKEN || '';
 let telegramBotInfo: any = null;
 let isPollingActive = false;
 let pollingOffset = 0;
-const APP_URL = process.env.APP_URL || 'https://ais-dev-t6q4mx7rsgym63i6uy76sh-743184594052.asia-southeast1.run.app';
+function getAppUrl(): string {
+  let url = process.env.APP_URL || 'https://ais-dev-t6q4mx7rsgym63i6uy76sh-743184594052.asia-southeast1.run.app';
+  return url.trim().replace(/\/+$/, '');
+}
 
 // -------------------------------------------------------------
 // TELEGRAM IN-CHAT MINES GAME ENGINE & STATE
@@ -770,7 +773,7 @@ function buildMinesBoardKeyboard(game: InChatMinesGame, isGameOver: boolean = fa
       { text: '💳 Deposit Crypto', callback_data: 'show_deposit' },
     ]);
     keyboard.push([
-      { text: '🚀 Open Mini App', web_app: { url: APP_URL } },
+      { text: '🚀 Open Mini App', web_app: { url: getAppUrl() } },
       { text: '💵 Check Balance', callback_data: 'check_balance' },
     ]);
   }
@@ -1290,7 +1293,7 @@ async function handleTelegramUpdate(update: any) {
             reply_markup: {
               inline_keyboard: [
                 [{ text: '💣 Play Mines in Chat', callback_data: 'mines_start_prompt' }],
-                [{ text: '🚀 Play Mini App Games', web_app: { url: APP_URL } }],
+                [{ text: '🚀 Play Mini App Games', web_app: { url: getAppUrl() } }],
                 [{ text: '💵 Check Balance', callback_data: 'check_balance' }],
               ],
             },
@@ -1304,7 +1307,7 @@ async function handleTelegramUpdate(update: any) {
             reply_markup: {
               inline_keyboard: [
                 [{ text: '💣 Play Mines Now', callback_data: 'mines_start_prompt' }],
-                [{ text: '🚀 Open Mini App', web_app: { url: APP_URL } }],
+                [{ text: '🚀 Open Mini App', web_app: { url: getAppUrl() } }],
               ],
             },
           });
@@ -1331,7 +1334,7 @@ async function handleTelegramUpdate(update: any) {
         `Tap *💣 Play In-Chat Mines* or *🚀 Open Casino Mini App* below:`;
       replyKeyboard = [
         [{ text: '💣 Play In-Chat Mines', callback_data: 'mines_start_prompt' }],
-        [{ text: '🚀 Open Casino Mini App', web_app: { url: APP_URL } }],
+        [{ text: '🚀 Open Casino Mini App', web_app: { url: getAppUrl() } }],
         [
           { text: '💳 Deposit', callback_data: 'show_deposit' },
           { text: '💸 Withdraw', callback_data: 'show_withdraw' },
@@ -1371,7 +1374,7 @@ async function handleTelegramUpdate(update: any) {
         `• *VIP Rank:* ${user.vipTier}`;
       replyKeyboard = [
         [{ text: '💣 Play In-Chat Mines', callback_data: 'mines_start_prompt' }],
-        [{ text: '🚀 Launch Casino Mini App', web_app: { url: APP_URL } }],
+        [{ text: '🚀 Launch Casino Mini App', web_app: { url: getAppUrl() } }],
         [
           { text: '💳 Deposit', callback_data: 'show_deposit' },
           { text: '💸 Withdraw', callback_data: 'show_withdraw' },
@@ -1404,10 +1407,10 @@ async function handleTelegramUpdate(update: any) {
 
         if (isNaN(amountUsdParam) || amountUsdParam < 10) {
           replyText = `❌ *Invalid Withdrawal Amount*\n\nMinimum withdrawal is *$10.00 USD*.\nUsage: \`/withdraw <amount_usd> <crypto> <address>\`\nExample: \`/withdraw 50 USDT 0x71C...42f8\``;
-          replyKeyboard = [[{ text: '🚀 Open Mini App Withdraw Modal', web_app: { url: `${APP_URL}?action=withdraw` } }]];
+          replyKeyboard = [[{ text: '🚀 Open Mini App Withdraw Modal', web_app: { url: `${getAppUrl()}?action=withdraw` } }]];
         } else if (!validSymbols.includes(symbolParam)) {
           replyText = `❌ *Unsupported Cryptocurrency*\n\nSupported: \`USDT\`, \`BTC\`, \`ETH\`, \`LTC\`, \`SOL\``;
-          replyKeyboard = [[{ text: '🚀 Open Mini App Withdraw Modal', web_app: { url: `${APP_URL}?action=withdraw` } }]];
+          replyKeyboard = [[{ text: '🚀 Open Mini App Withdraw Modal', web_app: { url: `${getAppUrl()}?action=withdraw` } }]];
         } else if (user.balanceUsd < amountUsdParam) {
           replyText = `❌ *Insufficient Balance*\n\nYour balance is *$${user.balanceUsd.toFixed(2)} USD*, but you requested *$${amountUsdParam.toFixed(2)} USD*.`;
           replyKeyboard = [
@@ -1469,7 +1472,7 @@ async function handleTelegramUpdate(update: any) {
           `• \`/withdraw 250 BTC bc1qvs88parent9vaultstakesbtc99master77cold\`\n\n` +
           `_Minimum withdrawal: $10.00 USD. Automated instant payouts._`;
         replyKeyboard = [
-          [{ text: '💸 Open Mini App Withdraw Screen', web_app: { url: `${APP_URL}?action=withdraw` } }],
+          [{ text: '💸 Open Mini App Withdraw Screen', web_app: { url: `${getAppUrl()}?action=withdraw` } }],
           [{ text: '💵 Check Balance', callback_data: 'check_balance' }],
         ];
       }
@@ -1494,7 +1497,7 @@ async function handleTelegramUpdate(update: any) {
         `• /start - Welcome menu & Mini App launcher`;
       replyKeyboard = [
         [{ text: '💣 Play In-Chat Mines', callback_data: 'mines_start_prompt' }],
-        [{ text: '🚀 Open Vault Stakes Mini App', web_app: { url: APP_URL } }],
+        [{ text: '🚀 Open Vault Stakes Mini App', web_app: { url: getAppUrl() } }],
         [
           { text: '💳 Deposit', callback_data: 'show_deposit' },
           { text: '💸 Withdraw', callback_data: 'show_withdraw' },
@@ -1569,7 +1572,7 @@ app.get('/api/telegram/status', async (req, res) => {
     isConfigured: !!telegramBotToken,
     botInfo: telegramBotInfo,
     pollingActive: isPollingActive,
-    appUrl: APP_URL,
+    appUrl: getAppUrl(),
     sampleCommands: ['/start', '/balance', '/deposit', '/withdraw', '/vip'],
   });
 });
