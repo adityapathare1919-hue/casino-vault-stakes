@@ -206,4 +206,19 @@ export const api = {
     if (!res.ok) throw new Error('Failed to communicate with bot');
     return res.json();
   },
+
+  // Send Bot Message for in-app chat simulation
+  async sendBotMessage(params: { userId: string; text: string }): Promise<{
+    reply: string;
+    keyboard?: any[][];
+    qrCodeUrl?: string;
+  }> {
+    const res = await fetch('/api/bot/message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) throw new Error('Failed to send bot message');
+    return res.json();
+  },
 };

@@ -186,6 +186,8 @@ updatePrices();
 setInterval(updatePrices, 10000);
 
 // In-Memory Database (Per container instance)
+type CryptoSymbol = 'BTC' | 'ETH' | 'LTC' | 'SOL' | 'USDT';
+
 interface UserRecord {
   id: string;
   telegramId: number;
@@ -202,6 +204,7 @@ interface UserRecord {
   clientSeed: string;
   nonce: number;
   createdAt: string;
+  childAddresses?: Record<CryptoSymbol, { address: string; privateKey: string; derivationPath: string }>;
 }
 
 const users: Map<string, UserRecord> = new Map();
@@ -1028,6 +1031,96 @@ app.post('/api/vip/claim-rakeback', (req, res) => {
   });
 });
 
+// 6.5 Bot Chat Message Endpoint
+app.post('/api/bot/message', (req, res) => {
+  const { userId = 'tg_user_789123', text = '' } = req.body;
+  const user = getOrCreateUser(userId);
+  const normalized = text.trim().toLowerCase();
+
+  if (normalized.startsWith('/start') || normalized.startsWith('/help') || normalized === 'help') {
+    return res.json({
+      reply: `🤖 *Vault Stakes Telegram Bot v2.5*\n\nWelcome *${user.username}*!\n• Balance: *$${user.balanceUsd.toFixed(2)} USD*\n• VIP Tier: *${user.vipTier}*\n\nCommands:\n• \`/mines <amount>\`\n• \`/towers <amount> [easy|med|hard]\` (🦋 Butterfly safe / 🐍 Snake loss)\n• \`/deposit [crypto]\`\n• \`/withdraw <amount> <crypto> <address>\`\n• \`/balance\``,
+      keyboard: [
+        [
+          { text: '💣 Play Mines ($5)', callback_data: '/mines 5' },
+          { text: '🏰 Play Towers ($5 🦋/🐍)', callback_data: '/towers 5' },
+        ],
+        [
+          { text: '📥 Deposit Crypto', callback_data: '/deposit LTC' },
+          { text: '💳 Check Balance', callback_data: '/balance' },
+        ],
+      ],
+    });
+  }
+
+  if (normalized === '/balance' || normalized === 'balance') {
+    return res.json({
+      reply: `💳 *Account Balance*\n\n• Balance: *$${user.balanceUsd.toFixed(2)} USD*\n• VIP Tier: *${user.vipTier}*\n• Total Wagered: *$${user.totalWageredUsd.toFixed(2)} USD*\n• Rakeback Earned: *$${user.rakebackEarnedUsd.toFixed(2)} USD*`,
+    });
+  }
+
+  if (normalized.startsWith('/deposit') || normalized === 'deposit') {
+    const parts = normalized.split(/\s+/);
+    const sym = (parts[1] || 'LTC').toUpperCase();
+    const addr = user.childAddresses?.[sym as CryptoSymbol]?.address || 'ltc1qvaultstakes9999';
+    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(addr)}`;
+    return res.json({
+      reply: `📥 *${sym} Deposit Address*\n\n\`${addr}\`\n\n_Scan QR code or copy address above. Funds are auto-credited after 1 blockchain confirmation._`,
+      qrCodeUrl,
+      keyboard: [
+        [{ text: '🔄 Refresh Balance', callback_data: '/balance' }]
+      ]
+    });
+  }
+
+  if (normalized.startsWith('/mines')) {
+    const parts = normalized.split(/\s+/);
+    const bet = parseFloat(parts[1]?.replace(/[$usd]/gi, '')) || 5;
+    const minesCount = parseInt(parts[2]) || 3;
+    if (user.balanceUsd < bet) {
+      return res.json({ reply: `❌ Insufficient balance ($${user.balanceUsd.toFixed(2)}). Please deposit first.` });
+    }
+    user.balanceUsd = Number((user.balanceUsd - bet).toFixed(2));
+    user.totalWageredUsd = Number((user.totalWageredUsd + bet).toFixed(2));
+    
+    const kb = [];
+    for (let r = 0; r < 5; r++) {
+      const row = [];
+      for (let c = 0; c < 5; c++) {
+        row.push({ text: '⬛', callback_data: `mines_pick_${r*5+c}` });
+      }
+      kb.push(row);
+    }
+    return res.json({
+      reply: `💣 *Mines Game Active*\n• Bet: *$${bet.toFixed(2)}* | Mines: *${minesCount}*\n• Multiplier: *1.00x*\n\n_Click tiles below to reveal diamonds!_`,
+      keyboard: kb,
+    });
+  }
+
+  if (normalized.startsWith('/towers')) {
+    const parts = normalized.split(/\s+/);
+    const bet = parseFloat(parts[1]?.replace(/[$usd]/gi, '')) || 5;
+    const diff = parts[2] || 'easy';
+    if (user.balanceUsd < bet) {
+      return res.json({ reply: `❌ Insufficient balance ($${user.balanceUsd.toFixed(2)}). Please deposit first.` });
+    }
+    user.balanceUsd = Number((user.balanceUsd - bet).toFixed(2));
+    user.totalWageredUsd = Number((user.totalWageredUsd + bet).toFixed(2));
+
+    const kb = [
+      [{ text: '⬛', callback_data: 'towers_pick_0_0' }, { text: '⬛', callback_data: 'towers_pick_0_1' }, { text: '⬛', callback_data: 'towers_pick_0_2' }]
+    ];
+    return res.json({
+      reply: `🏰 *Towers of Fortune (Tier 1/9)*\n• Bet: *$${bet.toFixed(2)}* | Diff: *${diff.toUpperCase()}*\n• Good: 🦋 Butterfly | Hazard: 🐍 Snake\n\n_Select a safe tile to climb!_`,
+      keyboard: kb,
+    });
+  }
+
+  return res.json({
+    reply: `✅ Command processed: "${text}". Type /help for casino commands.`,
+  });
+});
+
 // 7. Get History (Transactions & Bets)
 app.get('/api/history', (req, res) => {
   const userId = (req.query.userId as string) || 'tg_user_789123';
@@ -1464,17 +1557,17 @@ function buildTowersBoardKeyboard(game: InChatTowersGame, isGameOver: boolean = 
     for (let t = 0; t < tilesPerRow; t++) {
       if (isGameOver) {
         if (r === hitBombLvl && bombsInRow.includes(t)) {
-          rowButtons.push({ text: '💥', callback_data: 'towers_noop' });
+          rowButtons.push({ text: '🐍', callback_data: 'towers_noop' });
         } else if (bombsInRow.includes(t)) {
-          rowButtons.push({ text: '💣', callback_data: 'towers_noop' });
+          rowButtons.push({ text: '🐍', callback_data: 'towers_noop' });
         } else if (isCleared && game.selectedTiles[r] === t) {
-          rowButtons.push({ text: '💎', callback_data: 'towers_noop' });
+          rowButtons.push({ text: '🦋', callback_data: 'towers_noop' });
         } else {
           rowButtons.push({ text: '▫️', callback_data: 'towers_noop' });
         }
       } else if (isCleared) {
         if (game.selectedTiles[r] === t) {
-          rowButtons.push({ text: '💎', callback_data: 'towers_noop' });
+          rowButtons.push({ text: '🦋', callback_data: 'towers_noop' });
         } else {
           rowButtons.push({ text: '▫️', callback_data: 'towers_noop' });
         }

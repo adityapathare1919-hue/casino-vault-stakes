@@ -6,6 +6,7 @@ import { BottomNav, TabType } from './components/BottomNav';
 import { Lobby } from './components/Lobby';
 import { MinesGame } from './components/MinesGame';
 import { TowersGame } from './components/TowersGame';
+import { BotChatView } from './components/BotChatView';
 import { HistoryView } from './components/HistoryView';
 import { VaultSetupView } from './components/VaultSetupView';
 import { DepositModal } from './components/DepositModal';
@@ -283,6 +284,15 @@ export default function App() {
             onBalanceUpdate={handleBalanceUpdate}
             onOpenDeposit={() => setIsDepositOpen(true)}
             onOpenFairModal={handleOpenFairModal}
+          />
+        )}
+
+        {activeTab === 'bot' && (
+          <BotChatView
+            user={user}
+            prices={prices}
+            onOpenDeposit={() => setIsDepositOpen(true)}
+            onOpenWithdraw={() => setIsWithdrawOpen(true)}
           />
         )}
 
