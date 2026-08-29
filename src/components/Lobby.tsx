@@ -55,15 +55,15 @@ export const Lobby: React.FC<LobbyProps> = ({
           <div className="space-y-3 max-w-xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#00ff41]/10 border border-[#00ff41]/40 text-[#00ff41] text-xs font-bold font-mono">
               <span className="w-2 h-2 rounded-full bg-[#00ff41] animate-pulse"></span>
-              <span>12-WORD MASTER HD VAULT ACTIVE</span>
+              <span>PROVABLY FAIR CASINO</span>
             </div>
 
             <h1 className="text-2xl sm:text-4xl font-black text-white tracking-tight font-['Syne',sans-serif] leading-tight">
-              High-Stakes Crypto Mini App & Telegram Bot
+              Vault Stakes Casino
             </h1>
             
             <p className="text-xs sm:text-sm text-[#c0c0c0] leading-relaxed">
-              Automated multi-crypto deposits directly swept to parent master cold vaults. Instant live USD conversion and Provably Fair cryptographic gaming with 99% RTP.
+              Play Provably Fair Mines and Towers with 99% RTP. Fast cryptocurrency deposits and instant cashouts directly to your account balance.
             </p>
           </div>
 

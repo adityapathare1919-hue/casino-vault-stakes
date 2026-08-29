@@ -62,6 +62,8 @@ export default function App() {
 
   // Telegram WebApp initialization & Server User load
   useEffect(() => {
+    let currentUserId = user.id;
+
     // Check if running in Telegram WebApp
     const tg = (window as any).Telegram?.WebApp;
     if (tg) {
@@ -69,9 +71,10 @@ export default function App() {
       tg.expand();
       const tgUser = tg.initDataUnsafe?.user;
       if (tgUser) {
+        currentUserId = `tg_user_${tgUser.id}`;
         setUser((prev) => ({
           ...prev,
-          id: `tg_user_${tgUser.id}`,
+          id: currentUserId,
           telegramId: tgUser.id,
           username: tgUser.username || `Player_${tgUser.id}`,
           firstName: tgUser.first_name || 'Player',
@@ -83,8 +86,8 @@ export default function App() {
       }
     }
 
-    // Load user state & live prices from backend
-    api.getUser()
+    // Load user state & live prices from backend for this exact user
+    api.getUser(currentUserId)
       .then((data) => {
         if (data.user) {
           setUser((prev) => ({

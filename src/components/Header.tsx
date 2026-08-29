@@ -90,40 +90,34 @@ export const Header: React.FC<HeaderProps> = ({
           {showBalanceDropdown && (
             <div 
               id="balance-dropdown-menu"
-              className="absolute top-full mt-2 w-72 bg-[#0a122a] border border-[#c0c0c0]/40 rounded-2xl shadow-2xl p-3 z-50 animate-in fade-in zoom-in-95 duration-150"
+              className="absolute top-full mt-2 w-72 bg-[#0a122a] border border-[#c0c0c0]/40 rounded-2xl shadow-2xl p-3.5 z-50 animate-in fade-in zoom-in-95 duration-150"
             >
-              <div className="flex items-center justify-between pb-2 border-b border-[#c0c0c0]/20 mb-2">
-                <span className="text-xs font-bold text-white uppercase tracking-wider">Vault Crypto Balances</span>
-                <span className="text-[10px] text-[#00ff41] font-mono">12-Word HD</span>
+              <div className="flex items-center justify-between pb-2 border-b border-[#c0c0c0]/20 mb-2.5">
+                <span className="text-xs font-bold text-white uppercase tracking-wider">Account Balance</span>
+                <span className="text-[10px] text-[#00ff41] font-mono font-bold">USD Live Ledger</span>
               </div>
-              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                {(['BTC', 'ETH', 'LTC', 'SOL', 'USDT'] as CryptoSymbol[]).map((sym) => {
-                  const cfg = CRYPTO_CONFIGS[sym];
-                  const cryptoBal = user.cryptoBalances[sym] || 0;
-                  const price = prices[sym] || cfg.currentPriceUsd;
-                  const usdVal = cryptoBal * price;
-                  return (
-                    <div key={sym} className="flex items-center justify-between p-2 rounded-xl bg-[#050b18] hover:bg-[#1a2b4b] text-xs transition-colors">
-                      <div className="flex items-center gap-2">
-                        <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: `${cfg.color}30`, color: cfg.color }}>
-                          {cfg.icon}
-                        </span>
-                        <div>
-                          <span className="font-bold text-white">{sym}</span>
-                          <span className="text-[10px] text-[#c0c0c0] ml-1.5">${price.toLocaleString()}</span>
-                        </div>
-                      </div>
-                      <div className="text-right font-mono">
-                        <div className="text-white font-semibold">{formatCryptoAmount(cryptoBal, sym)}</div>
-                        <div className="text-[10px] text-[#00ff41]">{formatUsd(usdVal)}</div>
-                      </div>
-                    </div>
-                  );
-                })}
+              
+              <div className="space-y-2 text-xs font-mono">
+                <div className="flex items-center justify-between p-2 rounded-xl bg-[#050b18] border border-[#c0c0c0]/15">
+                  <span className="text-[#c0c0c0]">Playable Balance:</span>
+                  <span className="text-[#00ff41] font-bold text-sm">${user.balanceUsd.toFixed(2)} USD</span>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded-xl bg-[#050b18] border border-[#c0c0c0]/15">
+                  <span className="text-[#c0c0c0]">Total Deposited:</span>
+                  <span className="text-white font-bold">${user.totalDepositedUsd.toFixed(2)} USD</span>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded-xl bg-[#050b18] border border-[#c0c0c0]/15">
+                  <span className="text-[#c0c0c0]">Total Withdrawn:</span>
+                  <span className="text-white font-bold">${user.totalWithdrawnUsd.toFixed(2)} USD</span>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded-xl bg-[#050b18] border border-[#c0c0c0]/15">
+                  <span className="text-[#c0c0c0]">VIP Rakeback:</span>
+                  <span className="text-amber-400 font-bold">${Math.max(0, user.rakebackEarnedUsd - user.rakebackClaimedUsd).toFixed(2)} USD</span>
+                </div>
               </div>
 
               {/* Quick Actions in Dropdown */}
-              <div className="grid grid-cols-2 gap-2 mt-3 pt-2 border-t border-[#c0c0c0]/20">
+              <div className="grid grid-cols-2 gap-2 mt-3 pt-2.5 border-t border-[#c0c0c0]/20">
                 <button
                   id="header-dropdown-deposit-btn"
                   onClick={() => { setShowBalanceDropdown(false); onOpenDeposit(); sound.playClick(); }}
@@ -145,28 +139,8 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-        {/* TOP RIGHT: Quick Actions & Profile */}
+        {/* TOP RIGHT: Controls & Profile */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Quick Deposit Button */}
-          <button
-            id="header-quick-deposit-btn"
-            onClick={() => { onOpenDeposit(); sound.playClick(); }}
-            className="flex items-center gap-1 px-3 sm:px-4 py-2 bg-[#00ff41] hover:bg-white text-black font-black text-xs sm:text-sm rounded-xl shadow-[0_0_15px_rgba(0,255,65,0.35)] active:scale-95 transition-all uppercase tracking-wider"
-          >
-            <ArrowDownLeft className="w-4 h-4 stroke-[3]" />
-            <span className="hidden sm:inline">Deposit</span>
-          </button>
-
-          {/* Quick Withdraw Button */}
-          <button
-            id="header-quick-withdraw-btn"
-            onClick={() => { onOpenWithdraw(); sound.playClick(); }}
-            className="flex items-center gap-1 px-3 sm:px-4 py-2 bg-[#1a2b4b] hover:bg-[#00ff41] hover:text-black text-white border border-[#c0c0c0]/20 font-black text-xs sm:text-sm rounded-xl active:scale-95 transition-all uppercase tracking-wider"
-          >
-            <ArrowUpRight className="w-4 h-4 stroke-[2.5]" />
-            <span className="hidden sm:inline">Withdraw</span>
-          </button>
-
           {/* Mute Toggle */}
           <button
             id="sound-toggle-btn"

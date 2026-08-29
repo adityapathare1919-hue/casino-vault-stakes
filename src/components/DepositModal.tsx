@@ -177,7 +177,7 @@ export const DepositModal: React.FC<DepositModalProps> = ({
               <h2 className="text-base sm:text-lg font-black text-white uppercase tracking-wider font-['Syne',sans-serif]">
                 Deposit Crypto
               </h2>
-              <p className="text-xs text-[#c0c0c0]">Multi-Crypto HD Child Address with Auto USD Conversion</p>
+              <p className="text-xs text-[#c0c0c0]">Instant deposit with automatic USD conversion</p>
             </div>
           </div>
           <button
@@ -247,8 +247,8 @@ export const DepositModal: React.FC<DepositModalProps> = ({
 
             <div className="w-full">
               <div className="flex items-center justify-between text-xs text-[#c0c0c0] mb-1.5">
-                <span className="font-bold">Your Child Deposit Address (Index #{user.telegramId % 1000}):</span>
-                <span className="font-mono text-[10px] text-[#00ff41] font-bold">{childAddressInfo?.derivationPath}</span>
+                <span className="font-bold">Your Deposit Address:</span>
+                <span className="font-mono text-[10px] text-[#00ff41] font-bold">{config.network}</span>
               </div>
               <div className="flex items-center gap-2 p-2.5 rounded-xl bg-[#0a122a] border border-[#c0c0c0]/20 font-mono text-xs text-white break-all">
                 <span className="flex-1 select-all">{childAddressInfo?.address}</span>

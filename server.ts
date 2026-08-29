@@ -236,10 +236,14 @@ function deriveNetworkAddressServer(symbol: string, network: string, userId: str
 
 // Ensure default player exists with clean 0 balance and real live state
 function getOrCreateUser(userId: string = 'tg_user_789123', username: string = 'VaultPlayer', firstName: string = 'Player'): UserRecord {
-  if (!users.has(userId)) {
+  // Normalize userId: if passed as raw number or '12345', convert to 'tg_user_12345'
+  const normalizedId = userId.startsWith('tg_user_') ? userId : `tg_user_${userId}`;
+  const parsedTgId = parseInt(normalizedId.replace('tg_user_', ''), 10) || 789123;
+
+  if (!users.has(normalizedId)) {
     const user: UserRecord = {
-      id: userId,
-      telegramId: 789123,
+      id: normalizedId,
+      telegramId: parsedTgId,
       username,
       firstName,
       balanceUsd: 0.0,
@@ -260,9 +264,9 @@ function getOrCreateUser(userId: string = 'tg_user_789123', username: string = '
       nonce: 0,
       createdAt: new Date().toISOString(),
     };
-    users.set(userId, user);
+    users.set(normalizedId, user);
   }
-  return users.get(userId)!;
+  return users.get(normalizedId)!;
 }
 
 // -------------------------------------------------------------
@@ -329,8 +333,9 @@ app.post('/api/vault/import-seed', (req, res) => {
 
 // 3. Get User Profile & Child Addresses
 app.get('/api/user', (req, res) => {
-  const userId = (req.query.userId as string) || 'tg_user_789123';
-  const user = getOrCreateUser(userId);
+  const rawId = (req.query.userId as string) || (req.query.telegramId ? `tg_user_${req.query.telegramId}` : 'tg_user_789123');
+  const user = getOrCreateUser(rawId);
+  const userId = user.id;
 
   const childAddresses = {
     BTC: {
@@ -1772,18 +1777,19 @@ async function handleTelegramUpdate(update: any) {
       // Trigger instant on-chain check
       const newlyCredited = await checkAndProcessOnChainDeposits(userId).catch(() => []);
       const creditNote = newlyCredited.length > 0
-        ? `\n🎉 *New on-chain deposit detected & credited!* (+${newlyCredited.map(c => `${c.amountCrypto} ${c.symbol}`).join(', ')})\n`
+        ? `\n🎉 *New on-chain deposit detected & credited!* (+$${newlyCredited.reduce((acc, c) => acc + (c.amountUsd || 0), 0).toFixed(2)} USD)\n`
         : '';
 
-      replyText = `💵 *Vault Stakes Live Balance:*\n${creditNote}\n` +
-        `• *Total USD:* *$${user.balanceUsd.toFixed(2)} USD*\n` +
-        `• *BTC:* ${(user.cryptoBalances.BTC || 0).toFixed(6)} BTC ($${((user.cryptoBalances.BTC || 0) * cryptoPrices.BTC).toFixed(2)})\n` +
-        `• *ETH:* ${(user.cryptoBalances.ETH || 0).toFixed(4)} ETH ($${((user.cryptoBalances.ETH || 0) * cryptoPrices.ETH).toFixed(2)})\n` +
-        `• *LTC:* ${(user.cryptoBalances.LTC || 0).toFixed(4)} LTC ($${((user.cryptoBalances.LTC || 0) * cryptoPrices.LTC).toFixed(2)})\n` +
-        `• *SOL:* ${(user.cryptoBalances.SOL || 0).toFixed(3)} SOL ($${((user.cryptoBalances.SOL || 0) * cryptoPrices.SOL).toFixed(2)})\n` +
-        `• *USDT:* ${(user.cryptoBalances.USDT || 0).toFixed(2)} USDT\n\n` +
-        `• *Total Wagered:* $${user.totalWageredUsd.toFixed(2)}\n` +
-        `• *VIP Rank:* ${user.vipTier}`;
+      const unclaimedRake = Math.max(0, Number((user.rakebackEarnedUsd - user.rakebackClaimedUsd).toFixed(2)));
+
+      replyText = `💵 *Vault Stakes Account Balance:*\n${creditNote}\n` +
+        `• *Available Balance:* *$${user.balanceUsd.toFixed(2)} USD*\n` +
+        `• *Total Deposited:* $${user.totalDepositedUsd.toFixed(2)} USD\n` +
+        `• *Total Withdrawn:* $${user.totalWithdrawnUsd.toFixed(2)} USD\n` +
+        `• *Total Wagered:* $${user.totalWageredUsd.toFixed(2)} USD\n` +
+        `• *VIP Rank:* ${user.vipTier} VIP\n` +
+        `• *Claimable Rakeback:* $${unclaimedRake.toFixed(2)} USD\n\n` +
+        `_All deposits are automatically credited directly to your playable USD balance._`;
       replyKeyboard = [
         [{ text: '🔄 Check Live Deposits', callback_data: 'check_balance' }],
         [{ text: '💣 Play In-Chat Mines', callback_data: 'mines_start_prompt' }],

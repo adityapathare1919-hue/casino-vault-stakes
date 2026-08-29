@@ -171,11 +171,6 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ user, onOpenFairModal 
                         <span className="text-[10px] px-2 py-0.5 rounded-lg bg-[#00ff41]/10 text-[#00ff41] border border-[#00ff41]/40 font-bold uppercase">
                           {tx.status}
                         </span>
-                        {tx.isSweptToParent && (
-                          <span className="text-[10px] px-2 py-0.5 rounded-lg bg-[#1a2b4b] text-[#c0c0c0] border border-[#c0c0c0]/20 font-mono">
-                            Auto-Swept to Cold Vault
-                          </span>
-                        )}
                       </div>
                       <div className="text-[11px] text-[#c0c0c0] font-mono mt-0.5">
                         {new Date(tx.createdAt).toLocaleString()}
@@ -184,11 +179,11 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ user, onOpenFairModal 
                   </div>
 
                   <div className="flex sm:flex-col items-end justify-between sm:justify-center border-t sm:border-t-0 pt-2 sm:pt-0 border-[#c0c0c0]/15">
-                    <div className={`font-mono font-black text-sm ${isDeposit ? 'text-[#00ff41]' : 'text-white'}`}>
-                      {isDeposit ? '+' : '-'}{formatCryptoAmount(tx.amountCrypto, tx.symbol as CryptoSymbol)} {tx.symbol}
+                    <div className={`font-mono font-black text-sm ${isDeposit || isRakeback ? 'text-[#00ff41]' : 'text-white'}`}>
+                      {isDeposit || isRakeback ? '+' : '-'}{formatUsd(tx.amountUsd)} USD
                     </div>
-                    <div className="text-[11px] text-[#c0c0c0] font-mono font-bold">
-                      ({formatUsd(tx.amountUsd)})
+                    <div className="text-[11px] text-[#c0c0c0] font-mono">
+                      {formatCryptoAmount(tx.amountCrypto, tx.symbol as CryptoSymbol)} {tx.symbol}
                     </div>
                   </div>
                 </div>
