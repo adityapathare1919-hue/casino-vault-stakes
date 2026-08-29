@@ -107,6 +107,41 @@ export default function App() {
       .catch((err) => {
         console.log('Backend sync active:', err.message);
       });
+
+    // Real-time live market price polling every 10 seconds
+    const fetchLivePrices = async () => {
+      try {
+        const data = await api.getPrices();
+        if (data.prices) {
+          setPrices(data.prices);
+        }
+      } catch (e) {
+        // Client-side fallback to Binance direct public ticker
+        try {
+          const res = await fetch('https://api.binance.com/api/v3/ticker/price?symbols=%5B%22BTCUSDT%22,%22ETHUSDT%22,%22LTCUSDT%22,%22SOLUSDT%22%5D');
+          if (res.ok) {
+            const list: Array<{ symbol: string; price: string }> = await res.json();
+            setPrices((prev) => {
+              const updated = { ...prev };
+              for (const item of list) {
+                const val = parseFloat(item.price);
+                if (item.symbol === 'BTCUSDT' && val > 0) updated.BTC = parseFloat(val.toFixed(2));
+                if (item.symbol === 'ETHUSDT' && val > 0) updated.ETH = parseFloat(val.toFixed(2));
+                if (item.symbol === 'LTCUSDT' && val > 0) updated.LTC = parseFloat(val.toFixed(2));
+                if (item.symbol === 'SOLUSDT' && val > 0) updated.SOL = parseFloat(val.toFixed(2));
+              }
+              updated.USDT = 1.0;
+              return updated;
+            });
+          }
+        } catch (err) {}
+      }
+    };
+
+    fetchLivePrices();
+    const priceInterval = setInterval(fetchLivePrices, 10000);
+
+    return () => clearInterval(priceInterval);
   }, []);
 
   const handleBalanceUpdate = (newBalanceUsd: number) => {
@@ -154,6 +189,13 @@ export default function App() {
   };
 
   const unclaimedRakeback = Math.max(0, Number((user.rakebackEarnedUsd - user.rakebackClaimedUsd).toFixed(2)));
+
+  const handleMasterSeedChange = (newSeed: string) => {
+    setUser((prev) => ({
+      ...prev,
+      childAddresses: generateUserChildAddresses(prev.telegramId, prev.telegramId % 1000, newSeed),
+    }));
+  };
 
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-black">
@@ -211,6 +253,7 @@ export default function App() {
             onBalanceUpdate={handleBalanceUpdate}
             onOpenDeposit={() => setIsDepositOpen(true)}
             onOpenWithdraw={() => setIsWithdrawOpen(true)}
+            onMasterSeedChange={handleMasterSeedChange}
           />
         )}
       </main>

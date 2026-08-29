@@ -25,12 +25,52 @@ export function seededRandom(seed: string) {
 }
 
 // Master Parent Addresses generated from Root 12-Word Seed
+export function deriveParentAddress(symbol: CryptoSymbol, seedPhrase: string = DEFAULT_MASTER_SEED): string {
+  const hashKey = `parent-${symbol}-${seedPhrase}`;
+  let hashNum = 0;
+  for (let i = 0; i < hashKey.length; i++) {
+    hashNum = (hashNum << 5) - hashNum + hashKey.charCodeAt(i);
+    hashNum |= 0;
+  }
+  const hexPart = Math.abs(hashNum).toString(16).padStart(8, '0');
+  
+  let hexPart2 = '';
+  for (let i = 0; i < 6; i++) {
+    const chunk = `${hashKey}-part-${i}`;
+    let cHash = 0;
+    for (let j = 0; j < chunk.length; j++) {
+      cHash = (cHash << 5) - cHash + chunk.charCodeAt(j);
+      cHash |= 0;
+    }
+    hexPart2 += Math.abs(cHash).toString(16).padStart(6, '0');
+  }
+
+  const b58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+  switch (symbol) {
+    case 'BTC':
+      return `bc1q${hexPart}${hexPart2.substring(0, 28)}vs`;
+    case 'ETH':
+    case 'USDT':
+      return `0x${hexPart}${hexPart2.substring(0, 32)}`;
+    case 'LTC':
+      return `ltc1q${hexPart}${hexPart2.substring(0, 28)}vs`;
+    case 'SOL':
+      let solAddr = 'VS';
+      for (let i = 0; i < 42; i++) {
+        const charCode = (hexPart + hexPart2).charCodeAt(i % (hexPart + hexPart2).length) + i * 7;
+        solAddr += b58[charCode % b58.length];
+      }
+      return solAddr;
+  }
+}
+
 export const MASTER_PARENT_ADDRESSES: Record<CryptoSymbol, string> = {
-  BTC: 'bc1qvs88parent9vaultstakesbtc99master77cold',
-  ETH: '0x99A3F1d75Eb1B0586e3D4D685C8D42f888B77c42',
-  LTC: 'ltc1qvs88mastervaultstakesltc99parent77cold',
-  SOL: '7VaultStkMasterSol99ParentColdVault88Stake',
-  USDT: '0x99A3F1d75Eb1B0586e3D4D685C8D42f888B77c42', // ERC-20 / multi-network
+  BTC: deriveParentAddress('BTC', DEFAULT_MASTER_SEED),
+  ETH: deriveParentAddress('ETH', DEFAULT_MASTER_SEED),
+  LTC: deriveParentAddress('LTC', DEFAULT_MASTER_SEED),
+  SOL: deriveParentAddress('SOL', DEFAULT_MASTER_SEED),
+  USDT: deriveParentAddress('USDT', DEFAULT_MASTER_SEED),
 };
 
 export const CRYPTO_CONFIGS: Record<CryptoSymbol, CryptoConfig> = {

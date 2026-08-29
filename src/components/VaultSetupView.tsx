@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { UserProfile, CryptoSymbol } from '../types';
-import { formatUsd, DEFAULT_MASTER_SEED, MASTER_PARENT_ADDRESSES, deriveChildAddress } from '../utils/cryptoHD';
-import { Award, ShieldCheck, Key, RefreshCw, Copy, Check, ExternalLink, Bot, Zap, ArrowDownRight, ArrowUpRight, Layers } from 'lucide-react';
+import { formatUsd, DEFAULT_MASTER_SEED, deriveParentAddress, deriveChildAddress } from '../utils/cryptoHD';
+import { Award, Key, RefreshCw, Copy, Check, Bot, Zap, ArrowDownRight, ArrowUpRight, Layers, UploadCloud, AlertCircle, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { sound } from '../utils/audio';
 import confetti from 'canvas-confetti';
 import { api } from '../services/api';
@@ -11,6 +11,7 @@ interface VaultSetupViewProps {
   onBalanceUpdate: (newBalanceUsd: number) => void;
   onOpenDeposit: () => void;
   onOpenWithdraw: () => void;
+  onMasterSeedChange?: (newSeed: string) => void;
 }
 
 export const VaultSetupView: React.FC<VaultSetupViewProps> = ({
@@ -18,12 +19,34 @@ export const VaultSetupView: React.FC<VaultSetupViewProps> = ({
   onBalanceUpdate,
   onOpenDeposit,
   onOpenWithdraw,
+  onMasterSeedChange,
 }) => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [isClaimingRakeback, setIsClaimingRakeback] = useState(false);
   const [rakebackMessage, setRakebackMessage] = useState<string | null>(null);
   const [testUserIndex, setTestUserIndex] = useState<number>(user.telegramId % 1000);
   const [testSymbol, setTestSymbol] = useState<CryptoSymbol>('BTC');
+
+  // Master Seed State - syncs with server / local
+  const [activeMasterSeed, setActiveMasterSeed] = useState<string>(DEFAULT_MASTER_SEED);
+  const [inputSeedPhrase, setInputSeedPhrase] = useState<string>('');
+  const [isImportingSeed, setIsImportingSeed] = useState(false);
+  const [seedImportStatus, setSeedImportStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [isEditMode, setIsEditMode] = useState(false);
+
+  // Load active master seed from backend on mount
+  useEffect(() => {
+    api.getConfig()
+      .then((cfg) => {
+        if (cfg.masterSeedPhrase) {
+          setActiveMasterSeed(cfg.masterSeedPhrase);
+          if (onMasterSeedChange) onMasterSeedChange(cfg.masterSeedPhrase);
+        }
+      })
+      .catch((err) => {
+        console.log('Using default master seed phrase:', err.message);
+      });
+  }, []);
 
   const claimableRakeback = Math.max(0, Number((user.rakebackEarnedUsd - user.rakebackClaimedUsd).toFixed(2)));
 
@@ -69,7 +92,58 @@ export const VaultSetupView: React.FC<VaultSetupViewProps> = ({
     }
   };
 
-  const derivedSampleAddress = deriveChildAddress(testSymbol, `tg_user_${testUserIndex}`, testUserIndex, DEFAULT_MASTER_SEED);
+  // Live Import Master 12-Word Phrase Handler
+  const handleImportSeedPhrase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanWords = inputSeedPhrase.trim().toLowerCase().split(/\s+/).filter(Boolean);
+
+    if (cleanWords.length !== 12 && cleanWords.length !== 24) {
+      setSeedImportStatus({
+        type: 'error',
+        message: `Phrase must contain exactly 12 or 24 words. (You entered ${cleanWords.length} words)`,
+      });
+      return;
+    }
+
+    try {
+      setIsImportingSeed(true);
+      setSeedImportStatus(null);
+      sound.playClick();
+
+      const newSeed = cleanWords.join(' ');
+      const res = await api.importMasterSeed(newSeed);
+
+      setActiveMasterSeed(res.masterSeedPhrase);
+      if (onMasterSeedChange) onMasterSeedChange(res.masterSeedPhrase);
+
+      sound.playCashout();
+      confetti({ particleCount: 60, spread: 55, origin: { y: 0.6 } });
+
+      setSeedImportStatus({
+        type: 'success',
+        message: `Success! Active 12-Word Master HD Seed updated and addresses re-derived for all chains.`,
+      });
+      setInputSeedPhrase('');
+      setIsEditMode(false);
+    } catch (err: any) {
+      setSeedImportStatus({
+        type: 'error',
+        message: err.message || 'Failed to import master seed phrase.',
+      });
+    } finally {
+      setIsImportingSeed(false);
+    }
+  };
+
+  const currentParentAddresses: Record<CryptoSymbol, string> = {
+    BTC: deriveParentAddress('BTC', activeMasterSeed),
+    ETH: deriveParentAddress('ETH', activeMasterSeed),
+    LTC: deriveParentAddress('LTC', activeMasterSeed),
+    SOL: deriveParentAddress('SOL', activeMasterSeed),
+    USDT: deriveParentAddress('USDT', activeMasterSeed),
+  };
+
+  const derivedSampleAddress = deriveChildAddress(testSymbol, `tg_user_${testUserIndex}`, testUserIndex, activeMasterSeed);
 
   return (
     <div className="w-full max-w-4xl mx-auto p-3 sm:p-4 space-y-4 pb-20">
@@ -167,7 +241,7 @@ export const VaultSetupView: React.FC<VaultSetupViewProps> = ({
             className="flex items-center justify-center gap-2 py-3 px-4 rounded-2xl bg-[#00ff41] hover:bg-white text-black font-black uppercase text-xs tracking-wider shadow-[0_0_15px_rgba(0,255,65,0.3)] transition-all active:scale-98"
           >
             <ArrowDownRight className="w-4 h-4 stroke-[3]" />
-            <span>Deposit Crypto to Vault</span>
+            <span>Deposit Crypto</span>
           </button>
           <button
             id="vault-quick-withdraw-btn"
@@ -175,33 +249,114 @@ export const VaultSetupView: React.FC<VaultSetupViewProps> = ({
             className="flex items-center justify-center gap-2 py-3 px-4 rounded-2xl bg-[#1a2b4b] hover:bg-[#00ff41] hover:text-black text-white border border-[#c0c0c0]/20 font-black uppercase text-xs tracking-wider transition-all active:scale-98"
           >
             <ArrowUpRight className="w-4 h-4 stroke-[2.5]" />
-            <span>Withdraw Crypto Payout</span>
+            <span>Withdraw Crypto</span>
           </button>
         </div>
       </div>
 
       {/* Master 12-Word HD Seed & Child Derivation Inspector */}
       <div className="p-5 sm:p-6 bg-[#0a122a] border border-[#c0c0c0]/20 rounded-3xl shadow-xl backdrop-blur-md space-y-5">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-[#00ff41]/10 border border-[#00ff41]/40 flex items-center justify-center text-[#00ff41] shadow-[0_0_15px_rgba(0,255,65,0.25)]">
-            <Key className="w-6 h-6 stroke-[2.5]" />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-[#00ff41]/10 border border-[#00ff41]/40 flex items-center justify-center text-[#00ff41] shadow-[0_0_15px_rgba(0,255,65,0.25)]">
+              <Key className="w-6 h-6 stroke-[2.5]" />
+            </div>
+            <div>
+              <h2 className="text-base sm:text-lg font-black text-white font-['Syne',sans-serif] uppercase tracking-wider">
+                12-Word Master HD Recovery Phrase & Parent Wallets
+              </h2>
+              <p className="text-xs text-[#c0c0c0]">
+                Live BIP-39 deterministic phrase controller & BIP-44 cold parent derivation
+              </p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-base sm:text-lg font-black text-white font-['Syne',sans-serif] uppercase tracking-wider">
-              12-Word Master HD Wallet & Parent Address Inspector
-            </h2>
-            <p className="text-xs text-[#c0c0c0]">
-              Deterministic BIP-39/BIP-44 child address generation for BTC, ETH, LTC, SOL, USDT
-            </p>
-          </div>
+
+          <button
+            id="toggle-import-seed-btn"
+            onClick={() => { setIsEditMode(!isEditMode); sound.playClick(); }}
+            className="px-3.5 py-2 rounded-xl bg-[#1a2b4b] hover:bg-[#00ff41] hover:text-black text-white border border-[#c0c0c0]/20 text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all"
+          >
+            <UploadCloud className="w-4 h-4 stroke-[2.5]" />
+            <span>{isEditMode ? 'Close Import Form' : 'Import Live 12-Word Phrase'}</span>
+          </button>
         </div>
 
-        {/* Seed Phrase Display */}
+        {/* Live Seed Import Form */}
+        {isEditMode && (
+          <form onSubmit={handleImportSeedPhrase} className="p-4 rounded-2xl bg-[#050b18] border border-[#00ff41]/40 space-y-3 animate-in fade-in">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                <UploadCloud className="w-4 h-4 text-[#00ff41]" />
+                <span>Import Custom 12-Word or 24-Word Seed Phrase</span>
+              </span>
+              <span className="text-[10px] text-[#00ff41] font-mono font-bold">BIP-39 LIVE IMPORT</span>
+            </div>
+
+            <p className="text-[11px] text-[#c0c0c0]">
+              Paste your standard 12 or 24-word recovery phrase separated by spaces. All parent and child deposit addresses will be immediately regenerated.
+            </p>
+
+            <div>
+              <textarea
+                id="input-live-seed-phrase"
+                rows={3}
+                value={inputSeedPhrase}
+                onChange={(e) => setInputSeedPhrase(e.target.value)}
+                placeholder="e.g. apple banana cherry dog elephant fox grape horse igloo jungle kangaroo lemon"
+                className="w-full p-3 rounded-xl bg-[#0a122a] border border-[#c0c0c0]/30 text-white font-mono text-xs focus:border-[#00ff41] focus:outline-none placeholder:text-slate-600 leading-relaxed font-bold"
+              />
+              <div className="flex justify-between items-center mt-1 text-[10px] font-mono text-[#c0c0c0]">
+                <span>Words entered: <strong className="text-[#00ff41]">{inputSeedPhrase.trim().split(/\s+/).filter(Boolean).length}</strong> / 12</span>
+                <span className="text-slate-400">Standard BIP-39 English wordlist supported</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="submit"
+                id="submit-import-seed-btn"
+                disabled={isImportingSeed || inputSeedPhrase.trim().split(/\s+/).filter(Boolean).length < 12}
+                className="px-5 py-2.5 rounded-xl bg-[#00ff41] hover:bg-white text-black font-black uppercase text-xs tracking-wider shadow-[0_0_15px_rgba(0,255,65,0.3)] disabled:opacity-50 transition-all flex items-center gap-2"
+              >
+                {isImportingSeed ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                <span>Import & Activate Master Phrase</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setInputSeedPhrase('');
+                  setIsEditMode(false);
+                }}
+                className="px-4 py-2.5 rounded-xl bg-[#1a2b4b] hover:bg-slate-700 text-white font-black uppercase text-xs tracking-wider transition-all"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Status notification */}
+        {seedImportStatus && (
+          <div className={`p-3 rounded-2xl flex items-center gap-2 text-xs font-mono font-bold animate-in fade-in ${
+            seedImportStatus.type === 'success'
+              ? 'bg-[#00ff41]/10 border border-[#00ff41]/40 text-[#00ff41]'
+              : 'bg-red-500/10 border border-red-500/40 text-red-400'
+          }`}>
+            {seedImportStatus.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+            <span>{seedImportStatus.message}</span>
+          </div>
+        )}
+
+        {/* Active Seed Phrase Display */}
         <div>
           <div className="flex items-center justify-between text-xs font-bold text-[#c0c0c0] mb-2 uppercase tracking-wider">
-            <span>Active Master Recovery Seed Phrase (12 Words)</span>
+            <span className="flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-[#00ff41]" />
+              <span>Active Master Recovery Seed Phrase ({activeMasterSeed.split(' ').length} Words)</span>
+            </span>
             <button
-              onClick={() => handleCopy(DEFAULT_MASTER_SEED, 'seed')}
+              onClick={() => handleCopy(activeMasterSeed, 'seed')}
               className="flex items-center gap-1 text-[11px] text-[#00ff41] hover:underline font-black uppercase tracking-wider"
             >
               {copiedKey === 'seed' ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : <Copy className="w-3.5 h-3.5" />}
@@ -210,7 +365,7 @@ export const VaultSetupView: React.FC<VaultSetupViewProps> = ({
           </div>
 
           <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 p-3.5 rounded-2xl bg-[#050b18] border border-[#c0c0c0]/20 font-mono text-xs text-white">
-            {DEFAULT_MASTER_SEED.split(' ').map((word, idx) => (
+            {activeMasterSeed.split(' ').map((word, idx) => (
               <div key={idx} className="p-2 rounded-xl bg-[#0a122a] border border-[#c0c0c0]/15 flex items-center gap-2">
                 <span className="text-[10px] text-[#c0c0c0] font-bold">{idx + 1}.</span>
                 <span className="text-[#00ff41] font-bold">{word}</span>
@@ -222,7 +377,7 @@ export const VaultSetupView: React.FC<VaultSetupViewProps> = ({
         {/* Master Parent Addresses */}
         <div>
           <h3 className="text-xs font-bold text-[#c0c0c0] mb-2 uppercase tracking-wider">
-            Cold Vault Master Parent Addresses (Deposits Automatically Land Here)
+            Cold Vault Master Parent Addresses (Derived from Active Master Seed)
           </h3>
           <div className="space-y-2 text-xs font-mono">
             {(['BTC', 'ETH', 'LTC', 'SOL', 'USDT'] as CryptoSymbol[]).map((sym) => (
@@ -232,11 +387,11 @@ export const VaultSetupView: React.FC<VaultSetupViewProps> = ({
                     {sym}
                   </span>
                   <span className="text-[#c0c0c0] text-[11px] break-all select-all font-bold">
-                    {MASTER_PARENT_ADDRESSES[sym]}
+                    {currentParentAddresses[sym]}
                   </span>
                 </div>
                 <button
-                  onClick={() => handleCopy(MASTER_PARENT_ADDRESSES[sym], `parent-${sym}`)}
+                  onClick={() => handleCopy(currentParentAddresses[sym], `parent-${sym}`)}
                   className="self-end sm:self-auto px-2.5 py-1 rounded-lg bg-[#1a2b4b] hover:bg-[#00ff41] hover:text-black text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shrink-0 transition-colors"
                 >
                   {copiedKey === `parent-${sym}` ? <Check className="w-3 h-3 stroke-[3]" /> : <Copy className="w-3 h-3" />}
@@ -247,12 +402,12 @@ export const VaultSetupView: React.FC<VaultSetupViewProps> = ({
           </div>
         </div>
 
-        {/* Live Child Address Derivation Playground */}
+        {/* Live Child Address Derivation Inspector */}
         <div className="p-4 rounded-2xl bg-[#050b18] border border-[#c0c0c0]/20 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-xs font-black text-white uppercase tracking-wider">
               <Layers className="w-4 h-4 text-[#00ff41]" />
-              <span>Deterministic Child Address Simulator</span>
+              <span>Deterministic Child Address Inspector</span>
             </div>
             <span className="text-[10px] text-[#00ff41] font-mono font-bold">BIP-44 DERIVATION</span>
           </div>

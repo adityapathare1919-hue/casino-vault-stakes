@@ -219,75 +219,17 @@ export const DepositModal: React.FC<DepositModalProps> = ({
             </div>
           </div>
 
-          {/* Child-to-Parent Auto Sweep Explainer */}
-          <div className="p-3.5 rounded-2xl bg-[#050b18] border border-[#00ff41]/30 space-y-1.5 text-xs">
+          {/* Confirmation & Network Notice */}
+          <div className="p-3.5 rounded-2xl bg-[#050b18] border border-[#c0c0c0]/20 space-y-1.5 text-xs">
             <div className="flex items-center gap-2 text-[#00ff41] font-black uppercase tracking-wider">
               <Shield className="w-4 h-4" />
-              <span>How Auto-Deposit & Child Sweep Works</span>
+              <span>Deposit Instructions & Confirmation</span>
             </div>
             <p className="text-[#c0c0c0] leading-relaxed text-[11px]">
-              1. When you send crypto to your assigned child address, our automated on-chain listener detects the transaction.
+              • Send only <strong className="text-white">{selectedCrypto}</strong> ({config.network}) to this address.
               <br />
-              2. Your casino balance is immediately converted to USD at the live market price and credited.
-              <br />
-              3. The crypto balance is automatically swept into the Vault Stakes 12-Word Master Parent Cold Vault for maximum security.
+              • Deposits are credited instantly on <strong className="text-white">{config.confirmationsNeeded} network confirmation(s)</strong> and automatically converted to live USD balance.
             </p>
-          </div>
-
-          {/* Live Deposit Simulator Tool for Instant Testing */}
-          <div className="p-4 rounded-2xl bg-[#050b18] border border-[#c0c0c0]/30 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-xs font-black text-white uppercase tracking-wider">
-                <Zap className="w-4 h-4 text-amber-400" />
-                <span>Instant Test Deposit Simulator</span>
-              </div>
-              <span className="text-[10px] text-[#00ff41] font-mono font-bold">ON-CHAIN SIMULATOR</span>
-            </div>
-
-            <div className="flex items-center gap-2.5">
-              <div className="flex-1">
-                <label className="block text-[10px] font-bold text-[#c0c0c0] mb-1 uppercase">Simulated ({selectedCrypto})</label>
-                <input
-                  type="number"
-                  step="any"
-                  value={customSimAmount}
-                  onChange={(e) => setCustomSimAmount(parseFloat(e.target.value) || 0)}
-                  className="w-full px-3 py-2 rounded-xl bg-[#0a122a] border border-[#c0c0c0]/20 text-white font-mono text-xs focus:border-[#00ff41] focus:outline-none font-bold"
-                />
-              </div>
-              <div className="flex-1">
-                <label className="block text-[10px] font-bold text-[#c0c0c0] mb-1 uppercase">Converted USD Value</label>
-                <div className="px-3 py-2 rounded-xl bg-[#0a122a] border border-[#c0c0c0]/20 text-[#00ff41] font-mono font-black text-xs">
-                  {formatUsd(customSimAmount * currentPrice)}
-                </div>
-              </div>
-            </div>
-
-            {simulationStep && (
-              <div className="p-2.5 rounded-xl bg-[#0a122a] border border-[#00ff41]/40 text-[11px] text-[#00ff41] font-mono flex items-center gap-2">
-                <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#00ff41] shrink-0" />
-                <span>{simulationStep}</span>
-              </div>
-            )}
-
-            <button
-              id="simulate-deposit-trigger-btn"
-              onClick={handleRunSimulation}
-              disabled={isSimulating || customSimAmount <= 0}
-              className="w-full py-3 px-4 bg-[#00ff41] hover:bg-white text-black font-black text-xs uppercase tracking-wider rounded-xl shadow-[0_0_15px_rgba(0,255,65,0.3)] disabled:opacity-50 transition-all flex items-center justify-center gap-2"
-            >
-              {isSimulating ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  Processing Deposit & Sweep...
-                </>
-              ) : (
-                <>
-                  <Zap className="w-3.5 h-3.5 fill-current" />
-                  Simulate Deposit of {customSimAmount} {selectedCrypto} ({formatUsd(customSimAmount * currentPrice)})
-                </>
-              )}
-            </button>
           </div>
 
         </div>

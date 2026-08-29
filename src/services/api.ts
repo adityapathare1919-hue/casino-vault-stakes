@@ -1,6 +1,49 @@
 import { CryptoSymbol, UserProfile, Transaction, BetRecord } from '../types';
 
 export const api = {
+  // Fetch live market crypto prices
+  async getPrices(force = false): Promise<{
+    prices: Record<CryptoSymbol, number>;
+    lastUpdated: string;
+    source: string;
+  }> {
+    const res = await fetch(`/api/prices${force ? '?force=true' : ''}`);
+    if (!res.ok) throw new Error('Failed to fetch live crypto prices');
+    return res.json();
+  },
+
+  // Fetch app config (prices, master seed, parent addresses)
+  async getConfig(): Promise<{
+    prices: Record<CryptoSymbol, number>;
+    masterSeedPhrase?: string;
+    masterParentAddresses: Record<CryptoSymbol, string>;
+    mnemonicHint: string;
+    derivationFormat: string;
+  }> {
+    const res = await fetch('/api/config');
+    if (!res.ok) throw new Error('Failed to fetch config');
+    return res.json();
+  },
+
+  // Import Live 12/24-Word Master Seed Phrase
+  async importMasterSeed(seedPhrase: string): Promise<{
+    success: boolean;
+    message: string;
+    masterSeedPhrase: string;
+    masterParentAddresses: Record<CryptoSymbol, string>;
+  }> {
+    const res = await fetch('/api/vault/import-seed', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seedPhrase }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to import seed phrase');
+    }
+    return res.json();
+  },
+
   // Fetch user profile and child addresses
   async getUser(userId?: string): Promise<{ user: UserProfile; childAddresses: any; prices: Record<CryptoSymbol, number> }> {
     const res = await fetch(`/api/user${userId ? `?userId=${userId}` : ''}`);
