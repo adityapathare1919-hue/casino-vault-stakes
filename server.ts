@@ -2,6 +2,10 @@ import express from 'express';
 import path from 'path';
 import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
+import { ethers } from 'ethers';
+import { bech32 } from '@scure/base';
+import nacl from 'tweetnacl';
+import { PublicKey } from '@solana/web3.js';
 
 const app = express();
 const PORT = 3000;
@@ -11,25 +15,73 @@ app.use(express.json());
 // Master 12-Word Seed Configuration
 let MASTER_SEED_PHRASE = process.env.MASTER_SEED_PHRASE || 'vault stakes casino master seed phrase crypto deposit secure parent wallet 2026';
 
-// Helper to derive master parent address deterministically from any seed phrase
-function generateParentAddressFromSeed(symbol: string, seed: string): string {
-  const hash = crypto.createHash('sha256').update(`parent-${symbol}-${seed}`).digest('hex');
-  const b58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-  
-  if (symbol === 'BTC') {
-    return `bc1q${hash.substring(0, 36)}vs`;
-  } else if (symbol === 'ETH' || symbol === 'USDT') {
-    return `0x${hash.substring(0, 40)}`;
-  } else if (symbol === 'LTC') {
-    return `ltc1q${hash.substring(0, 36)}vs`;
-  } else if (symbol === 'SOL') {
-    let sol = 'VS';
-    for (let i = 0; i < 42; i++) {
-      sol += b58[parseInt(hash.substring((i * 2) % 60, ((i * 2) % 60) + 2), 16) % b58.length];
+function getSeedBytes(phrase: string): Uint8Array {
+  const clean = phrase.trim().toLowerCase();
+  try {
+    if (ethers.Mnemonic.isValidMnemonic(clean)) {
+      const mnemonic = ethers.Mnemonic.fromPhrase(clean);
+      return ethers.getBytes(mnemonic.computeSeed());
     }
-    return sol;
+  } catch (e) {}
+  const salt = ethers.toUtf8Bytes('mnemonic' + clean);
+  const pass = ethers.toUtf8Bytes(clean);
+  return ethers.getBytes(ethers.computeHmac('sha512', salt, pass));
+}
+
+function deriveBtcNativeSegwit(seed: Uint8Array, index: number = 0): string {
+  const root = ethers.HDNodeWallet.fromSeed(seed);
+  const child = root.derivePath(`m/84'/0'/0'/0/${index}`);
+  const pubKeyBytes = ethers.getBytes(child.publicKey);
+  const sha = ethers.getBytes(ethers.sha256(pubKeyBytes));
+  const hash160 = ethers.getBytes(ethers.ripemd160(sha));
+  const words = bech32.toWords(hash160);
+  return bech32.encode('bc', [0, ...words]);
+}
+
+function deriveLtcNativeSegwit(seed: Uint8Array, index: number = 0): string {
+  const root = ethers.HDNodeWallet.fromSeed(seed);
+  const child = root.derivePath(`m/84'/2'/0'/0/${index}`);
+  const pubKeyBytes = ethers.getBytes(child.publicKey);
+  const sha = ethers.getBytes(ethers.sha256(pubKeyBytes));
+  const hash160 = ethers.getBytes(ethers.ripemd160(sha));
+  const words = bech32.toWords(hash160);
+  return bech32.encode('ltc', [0, ...words]);
+}
+
+function deriveEthBip44(seed: Uint8Array, index: number = 0): string {
+  const root = ethers.HDNodeWallet.fromSeed(seed);
+  const child = root.derivePath(`m/44'/60'/0'/0/${index}`);
+  return child.address;
+}
+
+function deriveSolAddress(seed: Uint8Array, index: number = 0): string {
+  const solSeedData = ethers.getBytes(
+    ethers.computeHmac(
+      'sha512',
+      ethers.toUtf8Bytes('ed25519 solana seed'),
+      ethers.toUtf8Bytes(`sol-bip44-${index}-${ethers.hexlify(seed.slice(0, 32))}`)
+    )
+  );
+  const keypair = nacl.sign.keyPair.fromSeed(solSeedData.slice(0, 32));
+  return new PublicKey(keypair.publicKey).toBase58();
+}
+
+// Helper to derive master parent address deterministically from any seed phrase
+function generateParentAddressFromSeed(symbol: string, seedPhrase: string): string {
+  const seed = getSeedBytes(seedPhrase);
+  switch (symbol) {
+    case 'BTC':
+      return deriveBtcNativeSegwit(seed, 0);
+    case 'LTC':
+      return deriveLtcNativeSegwit(seed, 0);
+    case 'ETH':
+    case 'USDT':
+      return deriveEthBip44(seed, 0);
+    case 'SOL':
+      return deriveSolAddress(seed, 0);
+    default:
+      return deriveEthBip44(seed, 0);
   }
-  return `0x${hash.substring(0, 40)}`;
 }
 
 // Master Parent Addresses (Cold/Hot Vault)
@@ -158,57 +210,28 @@ const bets: Array<any> = [];
 const activeMinesGames: Map<string, any> = new Map();
 const activeTowersGames: Map<string, any> = new Map();
 
-// Helper to derive network-specific child address on server
-function deriveNetworkAddressServer(symbol: string, network: string, userId: string | number, index: number = 0): string {
-  const hashKey = `${MASTER_SEED_PHRASE}-${symbol}-${network}-${userId}-${index}`;
-  const sha = crypto.createHash('sha256').update(hashKey).digest('hex');
-  const b58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+// Helper to derive child address on server using real cryptographic HD derivation
+function deriveChildAddressServer(symbol: string, userId: string | number, index: number = 0): string {
+  const seed = getSeedBytes(MASTER_SEED_PHRASE);
+  const childIndex = Math.max(1, index + 1);
 
-  if (symbol === 'USDT') {
-    if (network === 'TRC20') {
-      let trc = 'T';
-      for (let i = 0; i < 33; i++) {
-        trc += b58[parseInt(sha.substring((i * 2) % 60, ((i * 2) % 60) + 2), 16) % b58.length];
-      }
-      return trc;
-    } else if (network === 'SOL' || network === 'Solana') {
-      let sol = 'VS';
-      for (let i = 0; i < 42; i++) {
-        sol += b58[parseInt(sha.substring((i * 2) % 60, ((i * 2) % 60) + 2), 16) % b58.length];
-      }
-      return sol;
-    } else {
-      // ERC20, BEP20, Polygon, Arbitrum
-      return `0x${sha.substring(0, 40)}`;
-    }
-  } else if (symbol === 'BTC') {
-    if (network === 'Native SegWit' || network === 'bech32' || network === 'NativeSegWit') {
-      return `bc1q${sha.substring(0, 36)}vs`;
-    } else if (network === 'Taproot') {
-      return `bc1p${sha.substring(0, 36)}vs`;
-    } else {
-      return `1VS${sha.substring(0, 31)}`;
-    }
-  } else if (symbol === 'ETH') {
-    return `0x${sha.substring(0, 40)}`;
-  } else if (symbol === 'LTC') {
-    if (network === 'Legacy') {
-      return `LVS${sha.substring(0, 31)}`;
-    }
-    return `ltc1q${sha.substring(0, 36)}vs`;
-  } else if (symbol === 'SOL') {
-    let sol = 'VS';
-    for (let i = 0; i < 42; i++) {
-      sol += b58[parseInt(sha.substring((i * 2) % 60, ((i * 2) % 60) + 2), 16) % b58.length];
-    }
-    return sol;
+  switch (symbol) {
+    case 'BTC':
+      return deriveBtcNativeSegwit(seed, childIndex);
+    case 'LTC':
+      return deriveLtcNativeSegwit(seed, childIndex);
+    case 'ETH':
+    case 'USDT':
+      return deriveEthBip44(seed, childIndex);
+    case 'SOL':
+      return deriveSolAddress(seed, childIndex);
+    default:
+      return deriveEthBip44(seed, childIndex);
   }
-  return `0x${sha.substring(0, 40)}`;
 }
 
-// Helper to derive child address on server
-function deriveChildAddressServer(symbol: string, userId: string | number, index: number = 0) {
-  return deriveNetworkAddressServer(symbol, 'default', userId, index);
+function deriveNetworkAddressServer(symbol: string, network: string, userId: string | number, index: number = 0): string {
+  return deriveChildAddressServer(symbol, userId, index);
 }
 
 // Ensure default player exists with clean 0 balance and real live state
