@@ -1329,7 +1329,7 @@ function getAppUrl(): string {
 }
 
 // -------------------------------------------------------------
-// TELEGRAM IN-CHAT MINES GAME ENGINE & STATE
+// TELEGRAM IN-CHAT GAMES ENGINE (MINES & TOWERS)
 // -------------------------------------------------------------
 
 interface InChatMinesGame {
@@ -1337,7 +1337,6 @@ interface InChatMinesGame {
   chatId: number | string;
   messageId?: number;
   wagerUsd: number;
-  isDemo: boolean;
   mineCount: number;
   minePositions: number[];
   revealedPositions: number[];
@@ -1350,7 +1349,44 @@ interface InChatMinesGame {
   nonce: number;
 }
 
+interface InChatTowersGame {
+  userId: string;
+  chatId: number | string;
+  messageId?: number;
+  wagerUsd: number;
+  difficulty: 'easy' | 'medium' | 'hard';
+  bombRows: number[][];
+  currentRow: number;
+  selectedTiles: number[];
+  status: 'playing' | 'cashout' | 'exploded';
+  currentMultiplier: number;
+  currentPayoutUsd: number;
+  serverSeed: string;
+  serverSeedHash: string;
+  clientSeed: string;
+  nonce: number;
+}
+
 const inChatMinesGames: Map<string, InChatMinesGame> = new Map();
+const inChatTowersGames: Map<string, InChatTowersGame> = new Map();
+
+const TOWER_TIER_CONFIG: Record<string, { tilesPerRow: number; bombsPerRow: number; multipliers: number[] }> = {
+  easy: {
+    tilesPerRow: 4,
+    bombsPerRow: 1,
+    multipliers: [1.31, 1.74, 2.32, 3.10, 4.13, 5.51, 7.35, 9.80, 13.07],
+  },
+  medium: {
+    tilesPerRow: 3,
+    bombsPerRow: 1,
+    multipliers: [1.48, 2.23, 3.34, 5.02, 7.53, 11.29, 16.94, 25.41, 38.12],
+  },
+  hard: {
+    tilesPerRow: 2,
+    bombsPerRow: 1,
+    multipliers: [1.98, 3.92, 7.76, 15.37, 30.43, 60.25, 119.30, 236.21, 467.70],
+  },
+};
 
 function calculateMinesMultiplier(revealedCount: number, mineCount: number): number {
   if (revealedCount <= 0) return 1.0;
@@ -1380,7 +1416,7 @@ function buildMinesBoardKeyboard(game: InChatMinesGame, isGameOver: boolean = fa
         } else if (game.revealedPositions.includes(idx)) {
           btnText = '💎';
         } else {
-          btnText = '✨';
+          btnText = '▫️';
         }
       } else {
         if (game.revealedPositions.includes(idx)) {
@@ -1400,30 +1436,64 @@ function buildMinesBoardKeyboard(game: InChatMinesGame, isGameOver: boolean = fa
     keyboard.push(rowButtons);
   }
 
-  // Action / Status Buttons
-  if (!isGameOver) {
-    if (game.revealedPositions.length > 0) {
-      keyboard.push([
-        {
-          text: `💰 Cashout $${game.currentPayoutUsd.toFixed(2)} (${game.currentMultiplier.toFixed(2)}x)`,
-          callback_data: 'mines_cashout',
-        },
-      ]);
-    }
+  // Only show Cashout button if active and player found >= 1 diamond
+  if (!isGameOver && game.revealedPositions.length > 0) {
     keyboard.push([
       {
-        text: `💎 ${game.revealedPositions.length}/${25 - game.mineCount} Found • 💣 ${game.mineCount} Mines`,
-        callback_data: 'mines_noop',
+        text: `💰 Cashout $${game.currentPayoutUsd.toFixed(2)} (${game.currentMultiplier.toFixed(2)}x)`,
+        callback_data: 'mines_cashout',
       },
     ]);
-  } else {
+  }
+
+  return keyboard;
+}
+
+function buildTowersBoardKeyboard(game: InChatTowersGame, isGameOver: boolean = false, hitBombLvl: number = -1): any[][] {
+  const keyboard: any[][] = [];
+  const cfg = TOWER_TIER_CONFIG[game.difficulty] || TOWER_TIER_CONFIG.easy;
+  const tilesPerRow = cfg.tilesPerRow;
+  const totalRows = 9;
+
+  for (let r = totalRows - 1; r >= 0; r--) {
+    const rowButtons: any[] = [];
+    const isCurrent = r === game.currentRow && !isGameOver;
+    const isCleared = r < game.currentRow;
+    const bombsInRow = game.bombRows[r] || [];
+
+    for (let t = 0; t < tilesPerRow; t++) {
+      if (isGameOver) {
+        if (r === hitBombLvl && bombsInRow.includes(t)) {
+          rowButtons.push({ text: '💥', callback_data: 'towers_noop' });
+        } else if (bombsInRow.includes(t)) {
+          rowButtons.push({ text: '💣', callback_data: 'towers_noop' });
+        } else if (isCleared && game.selectedTiles[r] === t) {
+          rowButtons.push({ text: '💎', callback_data: 'towers_noop' });
+        } else {
+          rowButtons.push({ text: '▫️', callback_data: 'towers_noop' });
+        }
+      } else if (isCleared) {
+        if (game.selectedTiles[r] === t) {
+          rowButtons.push({ text: '💎', callback_data: 'towers_noop' });
+        } else {
+          rowButtons.push({ text: '▫️', callback_data: 'towers_noop' });
+        }
+      } else if (isCurrent) {
+        rowButtons.push({ text: '❓', callback_data: `towers_pick_${r}_${t}` });
+      } else {
+        rowButtons.push({ text: '⬛', callback_data: 'towers_noop' });
+      }
+    }
+    keyboard.push(rowButtons);
+  }
+
+  // Only show Cashout button if active and player reached level >= 1
+  if (!isGameOver && game.currentRow > 0) {
     keyboard.push([
-      { text: '🔄 Play Mines Again', callback_data: 'mines_start_prompt' },
-      { text: '💳 Deposit Crypto', callback_data: 'show_deposit' },
-    ]);
-    keyboard.push([
-      { text: '🚀 Open Mini App', web_app: { url: getAppUrl() } },
-      { text: '💵 Check Balance', callback_data: 'check_balance' },
+      {
+        text: `💰 Cashout $${game.currentPayoutUsd.toFixed(2)} (${game.currentMultiplier.toFixed(2)}x)`,
+        callback_data: 'towers_cashout',
+      },
     ]);
   }
 
@@ -1462,274 +1532,21 @@ async function handleTelegramUpdate(update: any) {
     const firstName = from.first_name || 'Player';
     const user = getOrCreateUser(userId, username, firstName);
 
-    let text = message?.text || '';
+    let text = (message?.text || '').trim();
     let callbackData = callbackQuery?.data || '';
 
     // =========================================================
-    // 1. CALLBACK QUERY ROUTING (INLINE BUTTON CLICKS)
+    // 1. CALLBACK QUERY ROUTING (INLINE TILE CLICKS & CASHOUT)
     // =========================================================
     if (callbackQuery) {
-      // 1.1 No-Op Click
-      if (callbackData === 'mines_noop') {
+      if (callbackData === 'mines_noop' || callbackData === 'towers_noop') {
         await callTelegramApi('answerCallbackQuery', {
           callback_query_id: callbackQuery.id,
-          text: 'Tile already revealed!',
         });
         return;
       }
 
-      // 1.2 Deposit: Coin Selected -> Ask Network
-      if (callbackData.startsWith('dep_coin_')) {
-        await callTelegramApi('answerCallbackQuery', { callback_query_id: callbackQuery.id });
-        const coin = callbackData.replace('dep_coin_', '');
-        let netPrompt = `🌐 *Select Network for ${coin}:*\n\nChoose the blockchain network for your ${coin} deposit:`;
-        let netButtons: any[][] = [];
-
-        if (coin === 'USDT') {
-          netButtons = [
-            [
-              { text: '⚡ TRC20 (Tron)', callback_data: 'dep_net_USDT_TRC20' },
-              { text: '🔷 ERC20 (Ethereum)', callback_data: 'dep_net_USDT_ERC20' },
-            ],
-            [
-              { text: '🟡 BEP20 (BNB Chain)', callback_data: 'dep_net_USDT_BEP20' },
-              { text: '🟣 Solana (SPL)', callback_data: 'dep_net_USDT_SOL' },
-            ],
-            [
-              { text: '🟣 Polygon (MATIC)', callback_data: 'dep_net_USDT_Polygon' },
-              { text: '🔙 Back to Cryptos', callback_data: 'show_deposit' },
-            ],
-          ];
-        } else if (coin === 'BTC') {
-          netButtons = [
-            [{ text: '⚡ Native SegWit (bech32)', callback_data: 'dep_net_BTC_NativeSegWit' }],
-            [{ text: '🛡️ Taproot (bech32m)', callback_data: 'dep_net_BTC_Taproot' }],
-            [{ text: '🏛️ Legacy (P2PKH)', callback_data: 'dep_net_BTC_Legacy' }],
-            [{ text: '🔙 Back to Cryptos', callback_data: 'show_deposit' }],
-          ];
-        } else if (coin === 'ETH') {
-          netButtons = [
-            [{ text: '🔷 Ethereum Mainnet (ERC20)', callback_data: 'dep_net_ETH_Mainnet' }],
-            [{ text: '🔵 Arbitrum One (L2)', callback_data: 'dep_net_ETH_Arbitrum' }],
-            [{ text: '🔵 Base (L2)', callback_data: 'dep_net_ETH_Base' }],
-            [{ text: '🔙 Back to Cryptos', callback_data: 'show_deposit' }],
-          ];
-        } else if (coin === 'SOL') {
-          netButtons = [
-            [{ text: '🟣 Solana Mainnet', callback_data: 'dep_net_SOL_Solana' }],
-            [{ text: '🔙 Back to Cryptos', callback_data: 'show_deposit' }],
-          ];
-        } else if (coin === 'LTC') {
-          netButtons = [
-            [{ text: '⚪ Litecoin Native SegWit', callback_data: 'dep_net_LTC_NativeSegWit' }],
-            [{ text: '🏛️ Litecoin Legacy', callback_data: 'dep_net_LTC_Legacy' }],
-            [{ text: '🔙 Back to Cryptos', callback_data: 'show_deposit' }],
-          ];
-        }
-
-        await callTelegramApi('editMessageText', {
-          chat_id: chatId,
-          message_id: messageId,
-          text: netPrompt,
-          parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: netButtons },
-        });
-        return;
-      }
-
-      // 1.3 Deposit: Network Selected -> Send Address & QR Code ONLY
-      if (callbackData.startsWith('dep_net_')) {
-        await callTelegramApi('answerCallbackQuery', { callback_query_id: callbackQuery.id });
-        const parts = callbackData.split('_'); // ['dep', 'net', 'USDT', 'TRC20']
-        const coin = parts[2];
-        const network = parts.slice(3).join('_');
-        const depositAddress = deriveNetworkAddressServer(coin, network, userId);
-        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=350x350&data=${encodeURIComponent(depositAddress)}`;
-
-        const caption = `📍 *${coin} (${network}) Deposit Address:*\n\`${depositAddress}\`\n\n• _Send only ${coin} via ${network} network to this address._\n• _Instant automated credit on 1-3 network confirmations._`;
-        const qrButtons = [
-          [{ text: '🔄 Change Coin / Network', callback_data: 'show_deposit' }],
-          [
-            { text: '💣 Play Mines In-Chat', callback_data: 'mines_start_prompt' },
-            { text: '💵 Check Balance', callback_data: 'check_balance' },
-          ],
-        ];
-
-        // Send photo with QR Code and address caption
-        const photoRes = await callTelegramApi('sendPhoto', {
-          chat_id: chatId,
-          photo: qrUrl,
-          caption,
-          parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: qrButtons },
-        });
-
-        // Fallback if sendPhoto failed
-        if (!photoRes || !photoRes.ok) {
-          await callTelegramApi('sendMessage', {
-            chat_id: chatId,
-            text: caption,
-            parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: qrButtons },
-          });
-        }
-        return;
-      }
-
-      // 1.4 Mines Game: Step 1 Prompt (Select Mine Count)
-      if (callbackData === 'mines_start_prompt') {
-        await callTelegramApi('answerCallbackQuery', { callback_query_id: callbackQuery.id });
-        const promptText = `💣 *Vault Stakes Mines (5x5 Grid)* 💎\n\n*Step 1: Select Mines Count:*\nMore mines = higher multiplier per diamond found!`;
-        const countButtons = [
-          [
-            { text: '💣 1 Mine', callback_data: 'mines_cnt_1' },
-            { text: '💣 3 Mines', callback_data: 'mines_cnt_3' },
-            { text: '💣 5 Mines', callback_data: 'mines_cnt_5' },
-          ],
-          [
-            { text: '💣 10 Mines', callback_data: 'mines_cnt_10' },
-            { text: '💣 15 Mines', callback_data: 'mines_cnt_15' },
-            { text: '💣 24 Mines (Extreme)', callback_data: 'mines_cnt_24' },
-          ],
-          [
-            { text: '💳 Deposit Crypto', callback_data: 'show_deposit' },
-            { text: '💵 Balance', callback_data: 'check_balance' },
-          ],
-        ];
-
-        if (callbackQuery.message) {
-          await callTelegramApi('editMessageText', {
-            chat_id: chatId,
-            message_id: messageId,
-            text: promptText,
-            parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: countButtons },
-          });
-        } else {
-          await callTelegramApi('sendMessage', {
-            chat_id: chatId,
-            text: promptText,
-            parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: countButtons },
-          });
-        }
-        return;
-      }
-
-      // 1.5 Mines Game: Step 2 (Select Wager)
-      if (callbackData.startsWith('mines_cnt_')) {
-        await callTelegramApi('answerCallbackQuery', { callback_query_id: callbackQuery.id });
-        const mineCount = parseInt(callbackData.replace('mines_cnt_', ''), 10) || 3;
-        const wagerPrompt = `💣 *Mines Game (${mineCount} Mines Selected)* 💎\n💰 Balance: *$${user.balanceUsd.toFixed(2)} USD*\n\n*Step 2: Select Wager Amount:*`;
-        const wagerButtons = [
-          [
-            { text: '💵 $1.00', callback_data: `mines_bet_${mineCount}_1` },
-            { text: '💵 $2.00', callback_data: `mines_bet_${mineCount}_2` },
-            { text: '💵 $5.00', callback_data: `mines_bet_${mineCount}_5` },
-          ],
-          [
-            { text: '💵 $10.00', callback_data: `mines_bet_${mineCount}_10` },
-            { text: '💵 $25.00', callback_data: `mines_bet_${mineCount}_25` },
-            { text: '🆓 $10 Free Demo', callback_data: `mines_bet_${mineCount}_demo` },
-          ],
-          [
-            { text: '🔙 Change Mine Count', callback_data: 'mines_start_prompt' },
-          ],
-        ];
-
-        await callTelegramApi('editMessageText', {
-          chat_id: chatId,
-          message_id: messageId,
-          text: wagerPrompt,
-          parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: wagerButtons },
-        });
-        return;
-      }
-
-      // 1.6 Mines Game: Step 3 (Launch Board with 25 Tiles)
-      if (callbackData.startsWith('mines_bet_')) {
-        await callTelegramApi('answerCallbackQuery', { callback_query_id: callbackQuery.id });
-        const parts = callbackData.split('_'); // ['mines', 'bet', '3', '5']
-        const mineCount = parseInt(parts[2], 10) || 3;
-        const isDemo = parts[3] === 'demo';
-        const wager = isDemo ? 10.0 : (parseFloat(parts[3]) || 1.0);
-
-        if (!isDemo && user.balanceUsd < wager) {
-          await callTelegramApi('editMessageText', {
-            chat_id: chatId,
-            message_id: messageId,
-            text: `❌ *Insufficient Balance*\n\nYour balance is *$${user.balanceUsd.toFixed(2)} USD*, but requested wager is *$${wager.toFixed(2)} USD*.\n\nDeposit funds or play Free Demo mode:`,
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: `🆓 Play with $10 Free Demo`, callback_data: `mines_bet_${mineCount}_demo` }],
-                [{ text: '💳 Deposit Crypto', callback_data: 'show_deposit' }],
-                [{ text: '🔙 Back', callback_data: 'mines_start_prompt' }],
-              ],
-            },
-          });
-          return;
-        }
-
-        // Deduct balance for real wager
-        if (!isDemo) {
-          user.balanceUsd = Number((user.balanceUsd - wager).toFixed(2));
-          user.totalWageredUsd = Number((user.totalWageredUsd + wager).toFixed(2));
-          user.nonce += 1;
-          const rakebackAdd = Number((wager * 0.01).toFixed(2));
-          user.rakebackEarnedUsd = Number((user.rakebackEarnedUsd + rakebackAdd).toFixed(2));
-        }
-
-        // Generate 25 tiles with Provably Fair mines
-        const positions = Array.from({ length: 25 }, (_, i) => i);
-        for (let i = positions.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [positions[i], positions[j]] = [positions[j], positions[i]];
-        }
-        const minePositions = positions.slice(0, mineCount);
-
-        const serverSeed = crypto.randomBytes(32).toString('hex');
-        const serverSeedHash = crypto.createHash('sha256').update(serverSeed).digest('hex');
-
-        const newGame: InChatMinesGame = {
-          userId,
-          chatId,
-          messageId,
-          wagerUsd: wager,
-          isDemo,
-          mineCount,
-          minePositions,
-          revealedPositions: [],
-          status: 'playing',
-          currentMultiplier: 1.0,
-          currentPayoutUsd: wager,
-          serverSeed,
-          serverSeedHash,
-          clientSeed: user.clientSeed || 'chat_seed',
-          nonce: user.nonce || 1,
-        };
-        inChatMinesGames.set(userId, newGame);
-
-        const boardKeyboard = buildMinesBoardKeyboard(newGame);
-        const gameText = `💣 *Vault Stakes Mines in Progress!* 💎\n\n` +
-          `• *Wager:* $${wager.toFixed(2)} USD ${isDemo ? '(Free Demo)' : '(Real)'}\n` +
-          `• *Mines:* ${mineCount} 💣 | *Safe Gems:* ${25 - mineCount} 💎\n` +
-          `• *Gems Found:* 0 / ${25 - mineCount}\n` +
-          `• *Current Multiplier:* 1.00x ($${wager.toFixed(2)} USD)\n\n` +
-          `_Tap any tile below to reveal!_`;
-
-        await callTelegramApi('editMessageText', {
-          chat_id: chatId,
-          message_id: messageId,
-          text: gameText,
-          parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: boardKeyboard },
-        });
-        return;
-      }
-
-      // 1.7 Mines Game: Tile Clicked
+      // --- MINES: Tile Pick ---
       if (callbackData.startsWith('mines_pick_')) {
         const tileIdx = parseInt(callbackData.replace('mines_pick_', ''), 10);
         const game = inChatMinesGames.get(userId);
@@ -1737,7 +1554,7 @@ async function handleTelegramUpdate(update: any) {
         if (!game || game.status !== 'playing') {
           await callTelegramApi('answerCallbackQuery', {
             callback_query_id: callbackQuery.id,
-            text: 'No active game. Start a new round!',
+            text: 'Game is no longer active.',
           });
           return;
         }
@@ -1752,39 +1569,30 @@ async function handleTelegramUpdate(update: any) {
 
         // Check if hit a mine
         if (game.minePositions.includes(tileIdx)) {
-          // BOMB EXPLODED!
           game.status = 'exploded';
           inChatMinesGames.delete(userId);
 
-          // Record lost bet
-          if (!game.isDemo) {
-            bets.unshift({
-              id: 'bet_chat_' + crypto.randomBytes(6).toString('hex'),
-              userId,
-              game: 'mines',
-              amountUsd: game.wagerUsd,
-              payoutUsd: 0,
-              multiplier: 0,
-              won: false,
-              serverSeedHash: game.serverSeedHash,
-              clientSeed: game.clientSeed,
-              nonce: game.nonce,
-              createdAt: new Date().toISOString(),
-            });
-          }
+          bets.unshift({
+            id: 'bet_chat_' + crypto.randomBytes(6).toString('hex'),
+            userId,
+            game: 'mines',
+            amountUsd: game.wagerUsd,
+            payoutUsd: 0,
+            multiplier: 0,
+            won: false,
+            serverSeedHash: game.serverSeedHash,
+            clientSeed: game.clientSeed,
+            nonce: game.nonce,
+            createdAt: new Date().toISOString(),
+          });
 
           await callTelegramApi('answerCallbackQuery', {
             callback_query_id: callbackQuery.id,
-            text: '💥 BOOM! You hit a mine!',
+            text: '💥 Mine hit!',
           });
 
           const explodeKeyboard = buildMinesBoardKeyboard(game, true, tileIdx);
-          const explodeText = `💥 *BOOM! You hit a mine!* 💥\n\n` +
-            `• *Wager:* $${game.wagerUsd.toFixed(2)} USD\n` +
-            `• *Gems Found:* ${game.revealedPositions.length} 💎\n` +
-            `• *Outcome:* -$${game.wagerUsd.toFixed(2)} USD\n` +
-            `• *Remaining Balance:* *$${user.balanceUsd.toFixed(2)} USD*\n\n` +
-            `_Better luck next round!_`;
+          const explodeText = `💥 *Mine Hit!*\n• Lost: *$${game.wagerUsd.toFixed(2)} USD*\n• Balance: *$${user.balanceUsd.toFixed(2)} USD*`;
 
           await callTelegramApi('editMessageText', {
             chat_id: chatId,
@@ -1796,46 +1604,40 @@ async function handleTelegramUpdate(update: any) {
           return;
         }
 
-        // GEM FOUND!
+        // Safe Gem Found
         game.revealedPositions.push(tileIdx);
         const newMult = calculateMinesMultiplier(game.revealedPositions.length, game.mineCount);
         const newPayout = Number((game.wagerUsd * newMult).toFixed(2));
         game.currentMultiplier = newMult;
         game.currentPayoutUsd = newPayout;
 
-        // Check for max safe gems (Jackpot Auto-Win)
+        // Check Jackpot (All safe gems cleared)
         if (game.revealedPositions.length >= 25 - game.mineCount) {
           game.status = 'cashout';
           inChatMinesGames.delete(userId);
 
-          if (!game.isDemo) {
-            user.balanceUsd = Number((user.balanceUsd + newPayout).toFixed(2));
-            bets.unshift({
-              id: 'bet_chat_' + crypto.randomBytes(6).toString('hex'),
-              userId,
-              game: 'mines',
-              amountUsd: game.wagerUsd,
-              payoutUsd: newPayout,
-              multiplier: newMult,
-              won: true,
-              serverSeedHash: game.serverSeedHash,
-              clientSeed: game.clientSeed,
-              nonce: game.nonce,
-              createdAt: new Date().toISOString(),
-            });
-          }
+          user.balanceUsd = Number((user.balanceUsd + newPayout).toFixed(2));
+          bets.unshift({
+            id: 'bet_chat_' + crypto.randomBytes(6).toString('hex'),
+            userId,
+            game: 'mines',
+            amountUsd: game.wagerUsd,
+            payoutUsd: newPayout,
+            multiplier: newMult,
+            won: true,
+            serverSeedHash: game.serverSeedHash,
+            clientSeed: game.clientSeed,
+            nonce: game.nonce,
+            createdAt: new Date().toISOString(),
+          });
 
           await callTelegramApi('answerCallbackQuery', {
             callback_query_id: callbackQuery.id,
-            text: `👑 ALL GEMS CLEARED! Won $${newPayout.toFixed(2)} USD!`,
+            text: `👑 Won $${newPayout.toFixed(2)} USD!`,
           });
 
           const winKeyboard = buildMinesBoardKeyboard(game, true, -1);
-          const winText = `🏆 *ALL GEMS CLEARED! JACKPOT WIN!* 💰\n\n` +
-            `• *Wager:* $${game.wagerUsd.toFixed(2)} USD\n` +
-            `• *Multiplier:* *${newMult.toFixed(2)}x*\n` +
-            `• *Won:* *+$${newPayout.toFixed(2)} USD*\n` +
-            `• *New Balance:* *$${user.balanceUsd.toFixed(2)} USD*`;
+          const winText = `🏆 *All Gems Cleared!*\n• Multiplier: *${newMult.toFixed(2)}x*\n• Won: *$${newPayout.toFixed(2)} USD*\n• Balance: *$${user.balanceUsd.toFixed(2)} USD*`;
 
           await callTelegramApi('editMessageText', {
             chat_id: chatId,
@@ -1847,18 +1649,13 @@ async function handleTelegramUpdate(update: any) {
           return;
         }
 
-        // Active game continuation
         await callTelegramApi('answerCallbackQuery', {
           callback_query_id: callbackQuery.id,
-          text: `💎 Gem Found! +${newMult.toFixed(2)}x ($${newPayout.toFixed(2)})`,
+          text: `💎 Gem! ${newMult.toFixed(2)}x ($${newPayout.toFixed(2)})`,
         });
 
         const activeKeyboard = buildMinesBoardKeyboard(game, false);
-        const activeText = `💎 *Gem Found! (${game.revealedPositions.length}/${25 - game.mineCount})* ✨\n\n` +
-          `• *Wager:* $${game.wagerUsd.toFixed(2)} USD ${game.isDemo ? '(Free Demo)' : ''}\n` +
-          `• *Current Multiplier:* *${newMult.toFixed(2)}x*\n` +
-          `• *Cashout Value:* *$${newPayout.toFixed(2)} USD*\n\n` +
-          `_Tap another tile or Cashout below!_`;
+        const activeText = `💣 *Mines* (${game.revealedPositions.length}/${25 - game.mineCount})\n• Multiplier: *${newMult.toFixed(2)}x*\n• Value: *$${newPayout.toFixed(2)} USD*`;
 
         await callTelegramApi('editMessageText', {
           chat_id: chatId,
@@ -1870,7 +1667,7 @@ async function handleTelegramUpdate(update: any) {
         return;
       }
 
-      // 1.8 Mines Game: Cashout Button Clicked
+      // --- MINES: Cashout ---
       if (callbackData === 'mines_cashout') {
         const game = inChatMinesGames.get(userId);
         if (!game || game.status !== 'playing' || game.revealedPositions.length === 0) {
@@ -1884,22 +1681,20 @@ async function handleTelegramUpdate(update: any) {
         game.status = 'cashout';
         inChatMinesGames.delete(userId);
 
-        if (!game.isDemo) {
-          user.balanceUsd = Number((user.balanceUsd + game.currentPayoutUsd).toFixed(2));
-          bets.unshift({
-            id: 'bet_chat_' + crypto.randomBytes(6).toString('hex'),
-            userId,
-            game: 'mines',
-            amountUsd: game.wagerUsd,
-            payoutUsd: game.currentPayoutUsd,
-            multiplier: game.currentMultiplier,
-            won: true,
-            serverSeedHash: game.serverSeedHash,
-            clientSeed: game.clientSeed,
-            nonce: game.nonce,
-            createdAt: new Date().toISOString(),
-          });
-        }
+        user.balanceUsd = Number((user.balanceUsd + game.currentPayoutUsd).toFixed(2));
+        bets.unshift({
+          id: 'bet_chat_' + crypto.randomBytes(6).toString('hex'),
+          userId,
+          game: 'mines',
+          amountUsd: game.wagerUsd,
+          payoutUsd: game.currentPayoutUsd,
+          multiplier: game.currentMultiplier,
+          won: true,
+          serverSeedHash: game.serverSeedHash,
+          clientSeed: game.clientSeed,
+          nonce: game.nonce,
+          createdAt: new Date().toISOString(),
+        });
 
         await callTelegramApi('answerCallbackQuery', {
           callback_query_id: callbackQuery.id,
@@ -1907,11 +1702,7 @@ async function handleTelegramUpdate(update: any) {
         });
 
         const cashoutKeyboard = buildMinesBoardKeyboard(game, true, -1);
-        const cashoutText = `🎉 *Cashed Out Successfully!* 💰\n\n` +
-          `• *Wager:* $${game.wagerUsd.toFixed(2)} USD\n` +
-          `• *Multiplier:* *${game.currentMultiplier.toFixed(2)}x*\n` +
-          `• *Won Payout:* *+$${game.currentPayoutUsd.toFixed(2)} USD*\n` +
-          `• *New Balance:* *$${user.balanceUsd.toFixed(2)} USD*`;
+        const cashoutText = `💰 *Cashed Out!*\n• Multiplier: *${game.currentMultiplier.toFixed(2)}x*\n• Won: *$${game.currentPayoutUsd.toFixed(2)} USD*\n• Balance: *$${user.balanceUsd.toFixed(2)} USD*`;
 
         await callTelegramApi('editMessageText', {
           chat_id: chatId,
@@ -1923,253 +1714,519 @@ async function handleTelegramUpdate(update: any) {
         return;
       }
 
-      // Other Quick Callbacks
-      if (callbackData === 'check_balance') {
-        text = '/balance';
-      } else if (callbackData === 'show_deposit') {
-        text = '/deposit';
-      } else if (callbackData === 'show_withdraw') {
-        text = '/withdraw';
-      } else if (callbackData === 'claim_rakeback') {
-        const claimable = Number((user.rakebackEarnedUsd - user.rakebackClaimedUsd).toFixed(2));
-        if (claimable > 0) {
-          user.balanceUsd = Number((user.balanceUsd + claimable).toFixed(2));
-          user.rakebackClaimedUsd = Number((user.rakebackClaimedUsd + claimable).toFixed(2));
-          await callTelegramApi('sendMessage', {
-            chat_id: chatId,
-            text: `🎉 *Claimed $${claimable.toFixed(2)} USD Rakeback!*\n\nNew Balance: *$${user.balanceUsd.toFixed(2)} USD*`,
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: '💣 Play Mines in Chat', callback_data: 'mines_start_prompt' }],
-                [{ text: '🚀 Play Mini App Games', web_app: { url: getAppUrl() } }],
-                [{ text: '💵 Check Balance', callback_data: 'check_balance' }],
-              ],
-            },
-          });
-          return;
-        } else {
-          await callTelegramApi('sendMessage', {
-            chat_id: chatId,
-            text: `ℹ️ *No Rakeback Available Yet*\n\nPlay more Mines to earn up to 2.0% instant cashback on every wager!`,
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: '💣 Play Mines Now', callback_data: 'mines_start_prompt' }],
-                [{ text: '🚀 Open Mini App', web_app: { url: getAppUrl() } }],
-              ],
-            },
+      // --- TOWERS: Tile Pick ---
+      if (callbackData.startsWith('towers_pick_')) {
+        const [_, __, rowStr, tileStr] = callbackData.split('_');
+        const rIdx = parseInt(rowStr, 10);
+        const tIdx = parseInt(tileStr, 10);
+        const game = inChatTowersGames.get(userId);
+
+        if (!game || game.status !== 'playing') {
+          await callTelegramApi('answerCallbackQuery', {
+            callback_query_id: callbackQuery.id,
+            text: 'Game is no longer active.',
           });
           return;
         }
+
+        if (rIdx !== game.currentRow) {
+          await callTelegramApi('answerCallbackQuery', {
+            callback_query_id: callbackQuery.id,
+            text: `Pick a tile on Level ${game.currentRow + 1}!`,
+          });
+          return;
+        }
+
+        const bombsInRow = game.bombRows[rIdx] || [];
+        game.selectedTiles.push(tIdx);
+
+        // Check if hit bomb
+        if (bombsInRow.includes(tIdx)) {
+          game.status = 'exploded';
+          inChatTowersGames.delete(userId);
+
+          bets.unshift({
+            id: 'bet_chat_' + crypto.randomBytes(6).toString('hex'),
+            userId,
+            game: 'towers',
+            amountUsd: game.wagerUsd,
+            payoutUsd: 0,
+            multiplier: 0,
+            won: false,
+            serverSeedHash: game.serverSeedHash,
+            clientSeed: game.clientSeed,
+            nonce: game.nonce,
+            createdAt: new Date().toISOString(),
+          });
+
+          await callTelegramApi('answerCallbackQuery', {
+            callback_query_id: callbackQuery.id,
+            text: '💥 Bomb hit!',
+          });
+
+          const explodeKeyboard = buildTowersBoardKeyboard(game, true, rIdx);
+          const explodeText = `💥 *Bomb Hit at Level ${rIdx + 1}!*\n• Lost: *$${game.wagerUsd.toFixed(2)} USD*\n• Balance: *$${user.balanceUsd.toFixed(2)} USD*`;
+
+          await callTelegramApi('editMessageText', {
+            chat_id: chatId,
+            message_id: messageId,
+            text: explodeText,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: explodeKeyboard },
+          });
+          return;
+        }
+
+        // Safe Floor Cleared!
+        game.currentRow += 1;
+        const cfg = TOWER_TIER_CONFIG[game.difficulty] || TOWER_TIER_CONFIG.easy;
+        const newMult = cfg.multipliers[game.currentRow - 1] || 1.0;
+        const newPayout = Number((game.wagerUsd * newMult).toFixed(2));
+        game.currentMultiplier = newMult;
+        game.currentPayoutUsd = newPayout;
+
+        // Check if reached top of tower (9 levels)
+        if (game.currentRow >= 9) {
+          game.status = 'cashout';
+          inChatTowersGames.delete(userId);
+
+          user.balanceUsd = Number((user.balanceUsd + newPayout).toFixed(2));
+          bets.unshift({
+            id: 'bet_chat_' + crypto.randomBytes(6).toString('hex'),
+            userId,
+            game: 'towers',
+            amountUsd: game.wagerUsd,
+            payoutUsd: newPayout,
+            multiplier: newMult,
+            won: true,
+            serverSeedHash: game.serverSeedHash,
+            clientSeed: game.clientSeed,
+            nonce: game.nonce,
+            createdAt: new Date().toISOString(),
+          });
+
+          await callTelegramApi('answerCallbackQuery', {
+            callback_query_id: callbackQuery.id,
+            text: `👑 Tower Conquered! Won $${newPayout.toFixed(2)} USD!`,
+          });
+
+          const winKeyboard = buildTowersBoardKeyboard(game, true, -1);
+          const winText = `👑 *Tower Conquered! (Level 9/9)*\n• Multiplier: *${newMult.toFixed(2)}x*\n• Won: *$${newPayout.toFixed(2)} USD*\n• Balance: *$${user.balanceUsd.toFixed(2)} USD*`;
+
+          await callTelegramApi('editMessageText', {
+            chat_id: chatId,
+            message_id: messageId,
+            text: winText,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: winKeyboard },
+          });
+          return;
+        }
+
+        await callTelegramApi('answerCallbackQuery', {
+          callback_query_id: callbackQuery.id,
+          text: `💎 Level ${game.currentRow} Cleared! (${newMult.toFixed(2)}x)`,
+        });
+
+        const activeKeyboard = buildTowersBoardKeyboard(game, false);
+        const nextMult = cfg.multipliers[game.currentRow] || newMult;
+        const activeText = `🏰 *Towers (Level ${game.currentRow + 1}/9)*\n• Current: *${newMult.toFixed(2)}x* ($${newPayout.toFixed(2)} USD)\n• Next: *${nextMult.toFixed(2)}x*`;
+
+        await callTelegramApi('editMessageText', {
+          chat_id: chatId,
+          message_id: messageId,
+          text: activeText,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: activeKeyboard },
+        });
+        return;
+      }
+
+      // --- TOWERS: Cashout ---
+      if (callbackData === 'towers_cashout') {
+        const game = inChatTowersGames.get(userId);
+        if (!game || game.status !== 'playing' || game.currentRow === 0) {
+          await callTelegramApi('answerCallbackQuery', {
+            callback_query_id: callbackQuery.id,
+            text: 'Nothing to cashout!',
+          });
+          return;
+        }
+
+        game.status = 'cashout';
+        inChatTowersGames.delete(userId);
+
+        user.balanceUsd = Number((user.balanceUsd + game.currentPayoutUsd).toFixed(2));
+        bets.unshift({
+          id: 'bet_chat_' + crypto.randomBytes(6).toString('hex'),
+          userId,
+          game: 'towers',
+          amountUsd: game.wagerUsd,
+          payoutUsd: game.currentPayoutUsd,
+          multiplier: game.currentMultiplier,
+          won: true,
+          serverSeedHash: game.serverSeedHash,
+          clientSeed: game.clientSeed,
+          nonce: game.nonce,
+          createdAt: new Date().toISOString(),
+        });
+
+        await callTelegramApi('answerCallbackQuery', {
+          callback_query_id: callbackQuery.id,
+          text: `💰 Cashed out +$${game.currentPayoutUsd.toFixed(2)} USD!`,
+        });
+
+        const cashoutKeyboard = buildTowersBoardKeyboard(game, true, -1);
+        const cashoutText = `💰 *Cashed Out!*\n• Multiplier: *${game.currentMultiplier.toFixed(2)}x*\n• Won: *$${game.currentPayoutUsd.toFixed(2)} USD*\n• Balance: *$${user.balanceUsd.toFixed(2)} USD*`;
+
+        await callTelegramApi('editMessageText', {
+          chat_id: chatId,
+          message_id: messageId,
+          text: cashoutText,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: cashoutKeyboard },
+        });
+        return;
       }
     }
 
-    if (!text && !callbackData) return;
-
-    let replyText = '';
-    let replyKeyboard: any[] = [];
+    if (!text) return;
 
     // =========================================================
-    // 2. TEXT COMMAND HANDLERS
+    // 2. NATURAL CUSTOM BET NUMBER DETECTION
+    // e.g. "0.16$", "$0.16", "0.16", "5$", "2.5" -> starts /mines <amount>
     // =========================================================
-    if (text.startsWith('/start') || text === 'start') {
-      replyText = `🎰 *Welcome to Vault Stakes Casino!* ⚡\n\n` +
-        `Welcome *${firstName}*! Play high-stakes Provably Fair Mines directly in this chat or launch the full-screen Mini App.\n\n` +
-        `💰 *Your Balance:* $${user.balanceUsd.toFixed(2)} USD\n` +
-        `👑 *VIP Tier:* ${user.vipTier} VIP\n` +
-        `💣 *In-Chat Game:* Provably Fair 5x5 Mines\n` +
-        `🔐 *Multi-Crypto Vault:* BTC, ETH, LTC, SOL, USDT with instant QR codes\n\n` +
-        `Tap *💣 Play In-Chat Mines* or *🚀 Open Casino Mini App* below:`;
-      replyKeyboard = [
-        [{ text: '💣 Play In-Chat Mines', callback_data: 'mines_start_prompt' }],
-        [{ text: '🚀 Open Casino Mini App', web_app: { url: getAppUrl() } }],
-        [
-          { text: '💳 Deposit', callback_data: 'show_deposit' },
-          { text: '💸 Withdraw', callback_data: 'show_withdraw' },
-        ],
-        [
-          { text: '💵 Balance', callback_data: 'check_balance' },
-          { text: '👑 VIP Rakeback', callback_data: 'claim_rakeback' },
-        ],
-      ];
-    } else if (text.startsWith('/mines') || text === 'mines') {
-      replyText = `💣 *Vault Stakes Mines (5x5 Grid)* 💎\n\n*Step 1: Select Mines Count:*\nMore mines = higher multiplier per diamond found!`;
-      replyKeyboard = [
-        [
-          { text: '💣 1 Mine', callback_data: 'mines_cnt_1' },
-          { text: '💣 3 Mines', callback_data: 'mines_cnt_3' },
-          { text: '💣 5 Mines', callback_data: 'mines_cnt_5' },
-        ],
-        [
-          { text: '💣 10 Mines', callback_data: 'mines_cnt_10' },
-          { text: '💣 15 Mines', callback_data: 'mines_cnt_15' },
-          { text: '💣 24 Mines (Extreme)', callback_data: 'mines_cnt_24' },
-        ],
-        [
-          { text: '💳 Deposit Crypto', callback_data: 'show_deposit' },
-          { text: '💵 Balance', callback_data: 'check_balance' },
-        ],
-      ];
-    } else if (text.startsWith('/balance') || text.startsWith('/checkdeposit') || text === 'balance' || text === 'deposit') {
-      // Trigger instant on-chain check
+    let normalized = text;
+    const directBetMatch = text.match(/^(\d+(?:\.\d+)?)\s*[$usd]*$/i) || text.match(/^\$\s*(\d+(?:\.\d+)?)$/i);
+    if (directBetMatch && directBetMatch[1]) {
+      normalized = `/mines ${directBetMatch[1]}`;
+    }
+
+    // =========================================================
+    // 3. TEXT COMMAND ROUTING (NO UNNECESSARY BUTTONS)
+    // =========================================================
+
+    // --- /start or /help ---
+    if (normalized === '/start' || normalized === '/help' || normalized === 'start' || normalized === 'help') {
+      const welcome = `🎰 *Vault Stakes*\n• *Balance:* *$${user.balanceUsd.toFixed(2)} USD*\n\n` +
+        `*Commands:*\n` +
+        `• \`/mines <amount> [mines]\` (e.g. \`/mines 0.16$\`, \`/mines 0.50 5\`)\n` +
+        `• \`/towers <amount> [diff]\` (e.g. \`/towers 0.16$\`, \`/towers 1 hard\`)\n` +
+        `• \`/deposit [crypto]\` (BTC, ETH, LTC, SOL, USDT)\n` +
+        `• \`/balance\`\n` +
+        `• \`/withdraw <amount> <crypto> <address>\`\n\n` +
+        `_You can also just send \`0.16$\` to start Mines!_`;
+
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: welcome,
+        parse_mode: 'Markdown',
+      });
+      return;
+    }
+
+    // --- /balance ---
+    if (normalized === '/balance' || normalized === 'balance') {
       const newlyCredited = await checkAndProcessOnChainDeposits(userId).catch(() => []);
       const creditNote = newlyCredited.length > 0
-        ? `\n🎉 *New on-chain deposit detected & credited!* (+$${newlyCredited.reduce((acc, c) => acc + (c.amountUsd || 0), 0).toFixed(2)} USD)\n`
+        ? `🎉 *Deposit Credited:* +$${newlyCredited.reduce((acc, c) => acc + (c.amountUsd || 0), 0).toFixed(2)} USD\n\n`
         : '';
 
-      const unclaimedRake = Math.max(0, Number((user.rakebackEarnedUsd - user.rakebackClaimedUsd).toFixed(2)));
+      const balText = `💳 *Account Balance*\n\n${creditNote}` +
+        `• *Balance:* *$${user.balanceUsd.toFixed(2)} USD*\n` +
+        `• *Wagered:* $${user.totalWageredUsd.toFixed(2)} USD\n` +
+        `• *VIP:* ${user.vipTier}\n\n` +
+        `_Send \`/mines 0.16$\` or \`/towers 0.16$\` to play._`;
 
-      replyText = `💵 *Vault Stakes Account Balance:*\n${creditNote}\n` +
-        `• *Available Balance:* *$${user.balanceUsd.toFixed(2)} USD*\n` +
-        `• *Total Deposited:* $${user.totalDepositedUsd.toFixed(2)} USD\n` +
-        `• *Total Withdrawn:* $${user.totalWithdrawnUsd.toFixed(2)} USD\n` +
-        `• *Total Wagered:* $${user.totalWageredUsd.toFixed(2)} USD\n` +
-        `• *VIP Rank:* ${user.vipTier} VIP\n` +
-        `• *Claimable Rakeback:* $${unclaimedRake.toFixed(2)} USD\n\n` +
-        `_All deposits are automatically credited directly to your playable USD balance._`;
-      replyKeyboard = [
-        [{ text: '🔄 Check Live Deposits', callback_data: 'check_balance' }],
-        [{ text: '💣 Play In-Chat Mines', callback_data: 'mines_start_prompt' }],
-        [{ text: '🚀 Launch Casino Mini App', web_app: { url: getAppUrl() } }],
-        [
-          { text: '💳 Deposit', callback_data: 'show_deposit' },
-          { text: '💸 Withdraw', callback_data: 'show_withdraw' },
-        ],
-      ];
-    } else if (text.startsWith('/deposit') || text === 'deposit') {
-      replyText = `💳 *Select Deposit Cryptocurrency:*\n\nChoose the crypto asset to generate your personal cold vault address:`;
-      replyKeyboard = [
-        [
-          { text: '🟢 USDT', callback_data: 'dep_coin_USDT' },
-          { text: '🟡 BTC', callback_data: 'dep_coin_BTC' },
-          { text: '🔵 ETH', callback_data: 'dep_coin_ETH' },
-        ],
-        [
-          { text: '🟣 SOL', callback_data: 'dep_coin_SOL' },
-          { text: '⚪ LTC', callback_data: 'dep_coin_LTC' },
-        ],
-        [
-          { text: '💣 Play Mines In-Chat', callback_data: 'mines_start_prompt' },
-          { text: '💵 Check Balance', callback_data: 'check_balance' },
-        ],
-      ];
-    } else if (text.startsWith('/withdraw') || text.startsWith('/cashout') || text === 'withdraw') {
-      const parts = text.trim().split(/\s+/);
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: balText,
+        parse_mode: 'Markdown',
+      });
+      return;
+    }
+
+    // --- /deposit ---
+    if (normalized.startsWith('/deposit') || normalized === 'deposit') {
+      const parts = normalized.split(/\s+/);
+      const sym = (parts[1] || 'LTC').toUpperCase();
+      const addr = deriveChildAddressServer(sym, user.id);
+
+      const depText = `📥 *${sym} Deposit Address*\n\n` +
+        `\`${addr}\`\n\n` +
+        `• Send ${sym} to this address. Instantly credited to USD balance upon network confirmation.\n` +
+        `• Other coins: \`/deposit BTC\`, \`/deposit ETH\`, \`/deposit SOL\`, \`/deposit USDT\``;
+
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: depText,
+        parse_mode: 'Markdown',
+      });
+      return;
+    }
+
+    // --- /withdraw ---
+    if (normalized.startsWith('/withdraw') || normalized === 'withdraw') {
+      const parts = normalized.split(/\s+/);
       if (parts.length >= 4) {
-        const amountUsdParam = parseFloat(parts[1]);
+        const amountUsdParam = parseFloat(parts[1].replace(/[$usd]/gi, ''));
         const symbolParam = parts[2].toUpperCase();
         const destAddrParam = parts[3];
         const validSymbols = ['USDT', 'BTC', 'ETH', 'LTC', 'SOL'];
 
         if (isNaN(amountUsdParam) || amountUsdParam <= 0) {
-          replyText = `❌ *Invalid Withdrawal Amount*\n\nUsage: \`/withdraw <amount_usd> <crypto> <address>\`\nExample: \`/withdraw 5 LTC ltc1q...\``;
-          replyKeyboard = [[{ text: '🚀 Open Mini App Withdraw Modal', web_app: { url: `${getAppUrl()}?action=withdraw` } }]];
-        } else if (!validSymbols.includes(symbolParam)) {
-          replyText = `❌ *Unsupported Cryptocurrency*\n\nSupported: \`USDT\`, \`BTC\`, \`ETH\`, \`LTC\`, \`SOL\``;
-          replyKeyboard = [[{ text: '🚀 Open Mini App Withdraw Modal', web_app: { url: `${getAppUrl()}?action=withdraw` } }]];
-        } else if (user.balanceUsd < amountUsdParam) {
-          replyText = `❌ *Insufficient Balance*\n\nYour balance is *$${user.balanceUsd.toFixed(2)} USD*, but you requested *$${amountUsdParam.toFixed(2)} USD*.`;
-          replyKeyboard = [
-            [{ text: '💳 Deposit Crypto', callback_data: 'show_deposit' }],
-            [{ text: '💣 Play Mines (Demo)', callback_data: 'mines_start_prompt' }],
-          ];
-        } else {
-          const rate = cryptoPrices[symbolParam] || 1.0;
-          const netUsd = amountUsdParam;
-          const netCrypto = Number((netUsd / rate).toFixed(6));
-
-          user.balanceUsd = Number((user.balanceUsd - amountUsdParam).toFixed(2));
-          user.totalWithdrawnUsd = Number((user.totalWithdrawnUsd + amountUsdParam).toFixed(2));
-
-          const txHash = symbolParam === 'ETH' || symbolParam === 'USDT'
-            ? '0x' + crypto.randomBytes(32).toString('hex')
-            : crypto.randomBytes(32).toString('hex');
-
-          const newTx = {
-            id: 'tx_bot_wd_' + crypto.randomBytes(4).toString('hex'),
-            userId,
-            type: 'withdrawal',
-            symbol: symbolParam,
-            amountCrypto: netCrypto,
-            amountUsd: netUsd,
-            rateUsd: rate,
-            fromAddress: PARENT_ADDRESSES[symbolParam as keyof typeof PARENT_ADDRESSES] || PARENT_ADDRESSES.USDT,
-            toAddress: destAddrParam,
-            txHash,
-            confirmations: 1,
-            requiredConfirmations: 3,
-            status: 'completed',
-            createdAt: new Date().toISOString(),
-            completedAt: new Date().toISOString(),
-          };
-          transactions.unshift(newTx);
-
-          replyText = `✅ *Withdrawal Successfully Dispatched!* ⚡\n\n` +
-            `• *Payout:* ${netCrypto} ${symbolParam} ($${netUsd.toFixed(2)} USD)\n` +
-            `• *Destination:* \`${destAddrParam}\`\n` +
-            `• *Tx Hash:* \`${txHash.substring(0, 22)}...\`\n` +
-            `• *New Balance:* *$${user.balanceUsd.toFixed(2)} USD*\n\n` +
-            `_Funds have been broadcasted to the blockchain._`;
-          replyKeyboard = [
-            [{ text: '💣 Play Mines In-Chat', callback_data: 'mines_start_prompt' }],
-            [{ text: '💵 Check Balance', callback_data: 'check_balance' }],
-          ];
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `❌ *Invalid amount*\nUsage: \`/withdraw <amount_usd> <crypto> <address>\`\nExample: \`/withdraw 10 LTC ltc1q...\``,
+            parse_mode: 'Markdown',
+          });
+          return;
         }
-      } else {
-        replyText = `💸 *Instant Crypto Withdrawal Gateway*\n\n` +
-          `Available Balance: *$${user.balanceUsd.toFixed(2)} USD*\n\n` +
-          `*How to withdraw via Bot:*\n` +
-          `\`/withdraw <amount_usd> <crypto> <address>\`\n\n` +
-          `*Examples:*\n` +
-          `• \`/withdraw 50 USDT 0x99A3F1d75Eb1B0586e3D4D685C8D42f888B77c42\`\n` +
-          `• \`/withdraw 100 SOL 7VaultStkMasterSol99ParentColdVault88Stake\`\n` +
-          `• \`/withdraw 250 BTC bc1qvs88parent9vaultstakesbtc99master77cold\`\n\n` +
-          `_Minimum withdrawal: $10.00 USD. Automated instant payouts._`;
-        replyKeyboard = [
-          [{ text: '💸 Open Mini App Withdraw Screen', web_app: { url: `${getAppUrl()}?action=withdraw` } }],
-          [{ text: '💵 Check Balance', callback_data: 'check_balance' }],
-        ];
-      }
-    } else if (text.startsWith('/vip') || text === 'vip') {
-      const claimable = Number((user.rakebackEarnedUsd - user.rakebackClaimedUsd).toFixed(2));
-      replyText = `👑 *VIP Rewards & Rakeback Lounge*\n\n` +
-        `• *Current Rank:* ${user.vipTier} VIP\n` +
-        `• *Total Wagered:* $${user.totalWageredUsd.toFixed(2)} USD\n` +
-        `• *Claimable Rakeback:* *$${claimable.toFixed(2)} USD*\n\n` +
-        `Earn up to 2.0% instant cashback on all wagers in Mines and Towers!`;
-      replyKeyboard = [
-        [{ text: `💰 Claim $${claimable.toFixed(2)} Rakeback`, callback_data: 'claim_rakeback' }],
-        [{ text: '💣 Play Mines to Rank Up', callback_data: 'mines_start_prompt' }],
-      ];
-    } else {
-      replyText = `🎲 *Vault Stakes Command Center*\n\n` +
-        `Available Commands:\n` +
-        `• /mines - Play Provably Fair 5x5 Mines in this chat!\n` +
-        `• /deposit - Multi-crypto & network QR code deposit vault\n` +
-        `• /balance - View USD & crypto balances\n` +
-        `• /withdraw - Instant automated crypto cashouts\n` +
-        `• /start - Welcome menu & Mini App launcher`;
-      replyKeyboard = [
-        [{ text: '💣 Play In-Chat Mines', callback_data: 'mines_start_prompt' }],
-        [{ text: '🚀 Open Vault Stakes Mini App', web_app: { url: getAppUrl() } }],
-        [
-          { text: '💳 Deposit', callback_data: 'show_deposit' },
-          { text: '💸 Withdraw', callback_data: 'show_withdraw' },
-        ],
-      ];
-    }
 
-    if (chatId && replyText) {
+        if (!validSymbols.includes(symbolParam)) {
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `❌ *Unsupported coin*\nSupported: \`BTC\`, \`ETH\`, \`LTC\`, \`SOL\`, \`USDT\``,
+            parse_mode: 'Markdown',
+          });
+          return;
+        }
+
+        if (user.balanceUsd < amountUsdParam) {
+          await callTelegramApi('sendMessage', {
+            chat_id: chatId,
+            text: `❌ *Insufficient balance*\nYour balance: *$${user.balanceUsd.toFixed(2)} USD*`,
+            parse_mode: 'Markdown',
+          });
+          return;
+        }
+
+        const rate = cryptoPrices[symbolParam] || 1.0;
+        const netCrypto = Number((amountUsdParam / rate).toFixed(6));
+
+        user.balanceUsd = Number((user.balanceUsd - amountUsdParam).toFixed(2));
+        user.totalWithdrawnUsd = Number((user.totalWithdrawnUsd + amountUsdParam).toFixed(2));
+
+        const txHash = symbolParam === 'ETH' || symbolParam === 'USDT'
+          ? '0x' + crypto.randomBytes(32).toString('hex')
+          : crypto.randomBytes(32).toString('hex');
+
+        transactions.unshift({
+          id: 'tx_bot_wd_' + crypto.randomBytes(4).toString('hex'),
+          userId,
+          type: 'withdrawal',
+          symbol: symbolParam,
+          amountCrypto: netCrypto,
+          amountUsd: amountUsdParam,
+          rateUsd: rate,
+          fromAddress: PARENT_ADDRESSES[symbolParam as keyof typeof PARENT_ADDRESSES] || PARENT_ADDRESSES.USDT,
+          toAddress: destAddrParam,
+          txHash,
+          confirmations: 1,
+          requiredConfirmations: 3,
+          status: 'completed',
+          createdAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+        });
+
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `✅ *Withdrawal Dispatched!*\n• Amount: *${netCrypto} ${symbolParam}* ($${amountUsdParam.toFixed(2)} USD)\n• Destination: \`${destAddrParam}\`\n• Remaining Balance: *$${user.balanceUsd.toFixed(2)} USD*`,
+          parse_mode: 'Markdown',
+        });
+        return;
+      }
+
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
-        text: replyText,
+        text: `💸 *Withdraw Funds*\nUsage: \`/withdraw <amount_usd> <crypto> <address>\`\nExample: \`/withdraw 10 LTC ltc1q...\`\n• Balance: *$${user.balanceUsd.toFixed(2)} USD*`,
         parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: replyKeyboard,
-        },
       });
+      return;
     }
+
+    // --- /mines command ---
+    if (normalized.startsWith('/mines') || normalized.startsWith('mines ') || normalized === 'mines') {
+      const cmdStr = normalized.startsWith('mines ') ? `/${normalized}` : normalized;
+      const parts = cmdStr.split(/\s+/);
+      const betParam = parts[1];
+      const minesParam = parts[2];
+
+      if (!betParam || cmdStr === '/mines') {
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `💣 *Mines*\nEnter your bet amount to play:\n• \`/mines 0.16$\` (or send \`0.16$\`)\n• \`/mines 0.50 5\` (amount & mine count)\n• Balance: *$${user.balanceUsd.toFixed(2)} USD*`,
+          parse_mode: 'Markdown',
+        });
+        return;
+      }
+
+      const parsedBet = parseFloat(betParam.replace(/[$usd]/gi, ''));
+      if (isNaN(parsedBet) || parsedBet <= 0) {
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `❌ Invalid bet amount. Example: \`/mines 0.16$\``,
+          parse_mode: 'Markdown',
+        });
+        return;
+      }
+
+      let mineCount = 3;
+      if (minesParam) {
+        const parsedMines = parseInt(minesParam, 10);
+        if (!isNaN(parsedMines) && parsedMines >= 1 && parsedMines <= 24) mineCount = parsedMines;
+      }
+
+      if (user.balanceUsd < parsedBet) {
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `❌ *Insufficient Balance*\nRequired: *$${parsedBet.toFixed(2)} USD*\nBalance: *$${user.balanceUsd.toFixed(2)} USD*\nUse \`/deposit\` to fund your account.`,
+          parse_mode: 'Markdown',
+        });
+        return;
+      }
+
+      // Deduct bet & setup game
+      user.balanceUsd = Number((user.balanceUsd - parsedBet).toFixed(2));
+      user.totalWageredUsd = Number((user.totalWageredUsd + parsedBet).toFixed(2));
+      user.nonce += 1;
+      const rakebackAdd = Number((parsedBet * 0.01).toFixed(2));
+      user.rakebackEarnedUsd = Number((user.rakebackEarnedUsd + rakebackAdd).toFixed(2));
+
+      // Generate 25 tiles with Provably Fair mines
+      const positions = Array.from({ length: 25 }, (_, i) => i);
+      for (let i = positions.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [positions[i], positions[j]] = [positions[j], positions[i]];
+      }
+      const minePositions = positions.slice(0, mineCount);
+      const serverSeed = crypto.randomBytes(32).toString('hex');
+      const serverSeedHash = crypto.createHash('sha256').update(serverSeed).digest('hex');
+
+      const newGame: InChatMinesGame = {
+        userId,
+        chatId,
+        wagerUsd: parsedBet,
+        mineCount,
+        minePositions,
+        revealedPositions: [],
+        status: 'playing',
+        currentMultiplier: 1.0,
+        currentPayoutUsd: parsedBet,
+        serverSeed,
+        serverSeedHash,
+        clientSeed: user.clientSeed || 'chat_seed',
+        nonce: user.nonce || 1,
+      };
+      inChatMinesGames.set(userId, newGame);
+
+      const boardKeyboard = buildMinesBoardKeyboard(newGame, false);
+      const gameText = `💣 *Mines*\n• Bet: *$${parsedBet.toFixed(2)} USD* | Mines: *${mineCount}*\n• Multiplier: *1.00x*`;
+
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: gameText,
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: boardKeyboard },
+      });
+      return;
+    }
+
+    // --- /towers command ---
+    if (normalized.startsWith('/towers') || normalized.startsWith('towers ') || normalized === 'towers') {
+      const cmdStr = normalized.startsWith('towers ') ? `/${normalized}` : normalized;
+      const parts = cmdStr.split(/\s+/);
+      const betParam = parts[1];
+      const diffParam = (parts[2] || 'easy').toLowerCase();
+
+      if (!betParam || cmdStr === '/towers') {
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `🏰 *Towers*\nEnter your bet amount to play:\n• \`/towers 0.16$\`\n• \`/towers 0.50 medium\` (easy|medium|hard)\n• Balance: *$${user.balanceUsd.toFixed(2)} USD*`,
+          parse_mode: 'Markdown',
+        });
+        return;
+      }
+
+      const parsedBet = parseFloat(betParam.replace(/[$usd]/gi, ''));
+      if (isNaN(parsedBet) || parsedBet <= 0) {
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `❌ Invalid bet amount. Example: \`/towers 0.16$\``,
+          parse_mode: 'Markdown',
+        });
+        return;
+      }
+
+      const difficulty = (diffParam === 'medium' || diffParam === 'hard' ? diffParam : 'easy') as 'easy' | 'medium' | 'hard';
+      const cfg = TOWER_TIER_CONFIG[difficulty] || TOWER_TIER_CONFIG.easy;
+
+      if (user.balanceUsd < parsedBet) {
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: `❌ *Insufficient Balance*\nRequired: *$${parsedBet.toFixed(2)} USD*\nBalance: *$${user.balanceUsd.toFixed(2)} USD*\nUse \`/deposit\` to fund your account.`,
+          parse_mode: 'Markdown',
+        });
+        return;
+      }
+
+      // Deduct bet & setup game
+      user.balanceUsd = Number((user.balanceUsd - parsedBet).toFixed(2));
+      user.totalWageredUsd = Number((user.totalWageredUsd + parsedBet).toFixed(2));
+      user.nonce += 1;
+      const rakebackAdd = Number((parsedBet * 0.01).toFixed(2));
+      user.rakebackEarnedUsd = Number((user.rakebackEarnedUsd + rakebackAdd).toFixed(2));
+
+      // Generate 9 rows with bombs
+      const bombRows: number[][] = [];
+      for (let r = 0; r < 9; r++) {
+        const bombIndices: number[] = [];
+        while (bombIndices.length < cfg.bombsPerRow) {
+          const randIdx = Math.floor(Math.random() * cfg.tilesPerRow);
+          if (!bombIndices.includes(randIdx)) bombIndices.push(randIdx);
+        }
+        bombRows.push(bombIndices);
+      }
+
+      const serverSeed = crypto.randomBytes(32).toString('hex');
+      const serverSeedHash = crypto.createHash('sha256').update(serverSeed).digest('hex');
+
+      const newGame: InChatTowersGame = {
+        userId,
+        chatId,
+        wagerUsd: parsedBet,
+        difficulty,
+        bombRows,
+        currentRow: 0,
+        selectedTiles: [],
+        status: 'playing',
+        currentMultiplier: 1.0,
+        currentPayoutUsd: parsedBet,
+        serverSeed,
+        serverSeedHash,
+        clientSeed: user.clientSeed || 'chat_seed',
+        nonce: user.nonce || 1,
+      };
+      inChatTowersGames.set(userId, newGame);
+
+      const towerKeyboard = buildTowersBoardKeyboard(newGame, false);
+      const gameText = `🏰 *Towers (Level 1/9)*\n• Bet: *$${parsedBet.toFixed(2)} USD* | Diff: *${difficulty.toUpperCase()}*\n• Next: *${cfg.multipliers[0].toFixed(2)}x*`;
+
+      await callTelegramApi('sendMessage', {
+        chat_id: chatId,
+        text: gameText,
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: towerKeyboard },
+      });
+      return;
+    }
+
+    // Default Fallback
+    await callTelegramApi('sendMessage', {
+      chat_id: chatId,
+      text: `🎰 *Vault Stakes Commands*\n• \`/mines 0.16$\` (or send \`0.16$\`)\n• \`/towers 0.16$\` [easy|med|hard]\n• \`/deposit [crypto]\`\n• \`/balance\`\n• \`/withdraw <amount> <crypto> <address>\``,
+      parse_mode: 'Markdown',
+    });
   } catch (err) {
     console.error('[Telegram Bot] Error processing update:', err);
   }
