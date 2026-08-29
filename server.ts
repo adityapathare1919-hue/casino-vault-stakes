@@ -372,7 +372,264 @@ app.get('/api/user', (req, res) => {
   });
 });
 
-// 4. Deposit Simulator / Real Webhook Receiver
+// 4. On-Chain Deposit Scanner & Live Blockchain Tracker
+const processedOnChainTxs = new Set<string>();
+
+async function scanAddressForOnChainDeposits(symbol: string, address: string): Promise<Array<{ txid: string; amount: number; confirmed: boolean }>> {
+  const found: Array<{ txid: string; amount: number; confirmed: boolean }> = [];
+  if (!address || address.length < 10) return found;
+
+  try {
+    if (symbol === 'LTC') {
+      // 1. Check LitecoinSpace Mempool API
+      try {
+        const res = await fetch(`https://litecoinspace.org/api/address/${address}/txs`, { signal: AbortSignal.timeout(5000) });
+        if (res.ok) {
+          const txs: any = await res.json();
+          if (Array.isArray(txs)) {
+            for (const tx of txs) {
+              const txid = tx.txid;
+              if (processedOnChainTxs.has(txid)) continue;
+              let receivedSats = 0;
+              for (const out of tx.vout || []) {
+                if (out.scriptpubkey_address === address) {
+                  receivedSats += Number(out.value || 0);
+                }
+              }
+              if (receivedSats > 0) {
+                found.push({
+                  txid,
+                  amount: receivedSats / 100000000,
+                  confirmed: !!tx.status?.confirmed,
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // Fallback to Blockchair for LTC
+        try {
+          const bcRes = await fetch(`https://api.blockchair.com/litecoin/dashboards/address/${address}`, { signal: AbortSignal.timeout(5000) });
+          if (bcRes.ok) {
+            const bcData: any = await bcRes.json();
+            const addrObj = bcData?.data?.[address];
+            const balanceSats = Number(addrObj?.address?.balance || 0);
+            if (balanceSats > 0 && !processedOnChainTxs.has(`bc_ltc_${address}_${balanceSats}`)) {
+              found.push({
+                txid: `ltc_deposit_${Date.now()}`,
+                amount: balanceSats / 100000000,
+                confirmed: true,
+              });
+            }
+          }
+        } catch (e2) {}
+      }
+    } else if (symbol === 'BTC') {
+      // Check Bitcoin mempool.space
+      try {
+        const res = await fetch(`https://mempool.space/api/address/${address}/txs`, { signal: AbortSignal.timeout(5000) });
+        if (res.ok) {
+          const txs: any = await res.json();
+          if (Array.isArray(txs)) {
+            for (const tx of txs) {
+              const txid = tx.txid;
+              if (processedOnChainTxs.has(txid)) continue;
+              let receivedSats = 0;
+              for (const out of tx.vout || []) {
+                if (out.scriptpubkey_address === address) {
+                  receivedSats += Number(out.value || 0);
+                }
+              }
+              if (receivedSats > 0) {
+                found.push({
+                  txid,
+                  amount: receivedSats / 100000000,
+                  confirmed: !!tx.status?.confirmed,
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {}
+    } else if (symbol === 'ETH') {
+      // Check Ethereum public RPC
+      try {
+        const res = await fetch('https://eth.llamarpc.com', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'eth_getBalance',
+            params: [address, 'latest'],
+          }),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (res.ok) {
+          const data: any = await res.json();
+          if (data.result) {
+            const wei = BigInt(data.result);
+            const ethAmount = Number(wei) / 1e18;
+            if (ethAmount > 0.0001 && !processedOnChainTxs.has(`eth_${address}_${ethAmount.toFixed(4)}`)) {
+              found.push({
+                txid: `eth_onchain_${Date.now()}`,
+                amount: ethAmount,
+                confirmed: true,
+              });
+            }
+          }
+        }
+      } catch (e) {}
+    } else if (symbol === 'SOL') {
+      // Check Solana public RPC
+      try {
+        const res = await fetch('https://api.mainnet-beta.solana.com', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getBalance',
+            params: [address],
+          }),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (res.ok) {
+          const data: any = await res.json();
+          if (data.result?.value) {
+            const solAmount = Number(data.result.value) / 1e9;
+            if (solAmount > 0.01 && !processedOnChainTxs.has(`sol_${address}_${solAmount.toFixed(3)}`)) {
+              found.push({
+                txid: `sol_onchain_${Date.now()}`,
+                amount: solAmount,
+                confirmed: true,
+              });
+            }
+          }
+        }
+      } catch (e) {}
+    }
+  } catch (err) {
+    console.error(`[Scanner] Error checking ${symbol} at ${address}:`, err);
+  }
+
+  return found;
+}
+
+// Master function to scan user addresses on live blockchain, credit balance & notify
+async function checkAndProcessOnChainDeposits(userId: string): Promise<any[]> {
+  const user = getOrCreateUser(userId);
+  const creditedList: any[] = [];
+  const cryptos = ['LTC', 'BTC', 'ETH', 'SOL', 'USDT'];
+
+  for (const sym of cryptos) {
+    // Child address for this user
+    const childAddr = deriveChildAddressServer(sym, userId);
+    // Parent address (in case user deposited directly to parent)
+    const parentAddr = PARENT_ADDRESSES[sym as keyof typeof PARENT_ADDRESSES];
+
+    const addressesToCheck = [childAddr];
+    if (parentAddr && parentAddr !== childAddr) {
+      addressesToCheck.push(parentAddr);
+    }
+
+    for (const addr of addressesToCheck) {
+      const deposits = await scanAddressForOnChainDeposits(sym, addr);
+
+      for (const dep of deposits) {
+        const { txid, amount, confirmed } = dep;
+        if (processedOnChainTxs.has(txid)) continue;
+        processedOnChainTxs.add(txid);
+
+        const rate = cryptoPrices[sym] || 1.0;
+        const usdAmount = Number((amount * rate).toFixed(2));
+
+        // Credit user balance
+        user.balanceUsd = Number((user.balanceUsd + usdAmount).toFixed(2));
+        user.totalDepositedUsd = Number((user.totalDepositedUsd + usdAmount).toFixed(2));
+        user.cryptoBalances[sym] = Number(((user.cryptoBalances[sym] || 0) + amount).toFixed(6));
+
+        const newTx = {
+          id: 'tx_onchain_' + crypto.randomBytes(6).toString('hex'),
+          userId,
+          type: 'deposit',
+          symbol: sym,
+          amountCrypto: amount,
+          amountUsd: usdAmount,
+          rateUsd: rate,
+          fromAddress: 'External Blockchain Wallet',
+          toAddress: addr,
+          txHash: txid,
+          confirmations: confirmed ? 3 : 1,
+          requiredConfirmations: 3,
+          status: 'completed',
+          isSweptToParent: true,
+          parentDestination: parentAddr,
+          createdAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+
+        transactions.unshift(newTx);
+        creditedList.push(newTx);
+
+        console.log(`[Deposit Credited] User ${userId} received ${amount} ${sym} ($${usdAmount} USD). Tx: ${txid}`);
+
+        // Notify user via Telegram if this is a Telegram user
+        if (userId.startsWith('tg_user_') && telegramBotToken) {
+          const chatIdStr = userId.replace('tg_user_', '');
+          callTelegramApi('sendMessage', {
+            chat_id: chatIdStr,
+            text: `✅ *Deposit Confirmed on Blockchain!* 🎉\n\n` +
+              `• *Amount:* *${amount} ${sym}*\n` +
+              `• *Credited:* *+$${usdAmount.toFixed(2)} USD*\n` +
+              `• *New Balance:* *$${user.balanceUsd.toFixed(2)} USD*\n` +
+              `• *TxHash:* \`${txid.substring(0, 18)}...\`\n\n` +
+              `_Your balance has been updated and is ready to play!_`,
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '💣 Play Mines In-Chat', callback_data: 'mines_start_prompt' }],
+                [{ text: '🚀 Open Casino Mini App', web_app: { url: getAppUrl() } }],
+                [{ text: '💵 Check Balance', callback_data: 'check_balance' }],
+              ],
+            },
+          }).catch(() => {});
+        }
+      }
+    }
+  }
+
+  return creditedList;
+}
+
+// Background poller every 20 seconds for active users
+setInterval(async () => {
+  for (const [userId] of users.entries()) {
+    try {
+      await checkAndProcessOnChainDeposits(userId);
+    } catch (e) {}
+  }
+}, 20000);
+
+// API endpoint to trigger live blockchain scan for a user
+app.post('/api/deposit/check-live', async (req, res) => {
+  const userId = (req.body.userId as string) || (req.query.userId as string) || 'tg_user_789123';
+  const user = getOrCreateUser(userId);
+  try {
+    const credited = await checkAndProcessOnChainDeposits(userId);
+    res.json({
+      success: true,
+      creditedCount: credited.length,
+      credited,
+      updatedBalanceUsd: user.balanceUsd,
+      user,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to scan blockchain.' });
+  }
+});
+
+// Deposit Simulator / Real Webhook Receiver
 // When crypto arrives at child address, convert to USD, credit balance, and sweep to parent
 app.post('/api/deposit/simulate', (req, res) => {
   const { userId = 'tg_user_789123', symbol = 'USDT', amount = 100 } = req.body;
@@ -1511,8 +1768,14 @@ async function handleTelegramUpdate(update: any) {
           { text: '💵 Balance', callback_data: 'check_balance' },
         ],
       ];
-    } else if (text.startsWith('/balance') || text === 'balance') {
-      replyText = `💵 *Vault Stakes Balance:*\n\n` +
+    } else if (text.startsWith('/balance') || text.startsWith('/checkdeposit') || text === 'balance' || text === 'deposit') {
+      // Trigger instant on-chain check
+      const newlyCredited = await checkAndProcessOnChainDeposits(userId).catch(() => []);
+      const creditNote = newlyCredited.length > 0
+        ? `\n🎉 *New on-chain deposit detected & credited!* (+${newlyCredited.map(c => `${c.amountCrypto} ${c.symbol}`).join(', ')})\n`
+        : '';
+
+      replyText = `💵 *Vault Stakes Live Balance:*\n${creditNote}\n` +
         `• *Total USD:* *$${user.balanceUsd.toFixed(2)} USD*\n` +
         `• *BTC:* ${(user.cryptoBalances.BTC || 0).toFixed(6)} BTC ($${((user.cryptoBalances.BTC || 0) * cryptoPrices.BTC).toFixed(2)})\n` +
         `• *ETH:* ${(user.cryptoBalances.ETH || 0).toFixed(4)} ETH ($${((user.cryptoBalances.ETH || 0) * cryptoPrices.ETH).toFixed(2)})\n` +
@@ -1522,6 +1785,7 @@ async function handleTelegramUpdate(update: any) {
         `• *Total Wagered:* $${user.totalWageredUsd.toFixed(2)}\n` +
         `• *VIP Rank:* ${user.vipTier}`;
       replyKeyboard = [
+        [{ text: '🔄 Check Live Deposits', callback_data: 'check_balance' }],
         [{ text: '💣 Play In-Chat Mines', callback_data: 'mines_start_prompt' }],
         [{ text: '🚀 Launch Casino Mini App', web_app: { url: getAppUrl() } }],
         [

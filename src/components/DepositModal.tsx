@@ -12,6 +12,7 @@ interface DepositModalProps {
   user: UserProfile;
   prices: Record<CryptoSymbol, number>;
   onSimulateDeposit: (symbol: CryptoSymbol, amount: number) => Promise<any>;
+  onCheckLiveDeposits?: () => Promise<any>;
 }
 
 export const DepositModal: React.FC<DepositModalProps> = ({
@@ -20,18 +21,66 @@ export const DepositModal: React.FC<DepositModalProps> = ({
   user,
   prices,
   onSimulateDeposit,
+  onCheckLiveDeposits,
 }) => {
   const [selectedCrypto, setSelectedCrypto] = useState<CryptoSymbol>('USDT');
   const [copied, setCopied] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
   const [simulationStep, setSimulationStep] = useState<string | null>(null);
   const [customSimAmount, setCustomSimAmount] = useState<number>(100);
+  const [isCheckingLive, setIsCheckingLive] = useState(false);
+  const [liveCheckStatus, setLiveCheckStatus] = useState<string | null>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const cryptos: CryptoSymbol[] = ['USDT', 'BTC', 'ETH', 'LTC', 'SOL'];
   const config = CRYPTO_CONFIGS[selectedCrypto];
   const childAddressInfo = user.childAddresses[selectedCrypto];
   const currentPrice = prices[selectedCrypto] || config.currentPriceUsd;
+
+  // Live on-chain deposit checker handler
+  const handleCheckLiveOnChain = async (silent = false) => {
+    if (!onCheckLiveDeposits) return;
+    try {
+      if (!silent) {
+        setIsCheckingLive(true);
+        setLiveCheckStatus('Scanning mempools and blockchain explorers for your address...');
+        sound.playClick();
+      }
+      const res = await onCheckLiveDeposits();
+      if (res && res.creditedCount > 0) {
+        sound.playDepositSound();
+        confetti({
+          particleCount: 70,
+          spread: 70,
+          origin: { y: 0.6 },
+          colors: ['#00ff41', '#34d399', '#ffffff'],
+        });
+        setLiveCheckStatus(`✅ Detected and credited on-chain deposit! +$${res.credited.reduce((acc: number, c: any) => acc + c.amountUsd, 0).toFixed(2)} USD added.`);
+        setTimeout(() => setLiveCheckStatus(null), 6000);
+      } else if (!silent) {
+        setLiveCheckStatus('🔍 Checked! No new uncredited transactions found on blockchain yet. Monitoring continues...');
+        setTimeout(() => setLiveCheckStatus(null), 4000);
+      }
+    } catch (err: any) {
+      if (!silent) {
+        setLiveCheckStatus(`⚠️ Check completed: ${err.message || 'Waiting for network block'}`);
+        setTimeout(() => setLiveCheckStatus(null), 4000);
+      }
+    } finally {
+      if (!silent) setIsCheckingLive(false);
+    }
+  };
+
+  // Auto-scan on open and periodically while open
+  useEffect(() => {
+    if (isOpen && onCheckLiveDeposits) {
+      handleCheckLiveOnChain(true);
+      const interval = setInterval(() => {
+        handleCheckLiveOnChain(true);
+      }, 7000);
+      return () => clearInterval(interval);
+    }
+  }, [isOpen, onCheckLiveDeposits]);
 
   // Generate QR Code on canvas
   useEffect(() => {
@@ -220,16 +269,41 @@ export const DepositModal: React.FC<DepositModalProps> = ({
           </div>
 
           {/* Confirmation & Network Notice */}
-          <div className="p-3.5 rounded-2xl bg-[#050b18] border border-[#c0c0c0]/20 space-y-1.5 text-xs">
-            <div className="flex items-center gap-2 text-[#00ff41] font-black uppercase tracking-wider">
-              <Shield className="w-4 h-4" />
-              <span>Deposit Instructions & Confirmation</span>
+          <div className="p-3.5 rounded-2xl bg-[#050b18] border border-[#c0c0c0]/20 space-y-2 text-xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-[#00ff41] font-black uppercase tracking-wider">
+                <Shield className="w-4 h-4" />
+                <span>Live Blockchain Verification</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#00ff41]/10 border border-[#00ff41]/30 text-[10px] text-[#00ff41] font-mono font-bold">
+                <span className="w-2 h-2 rounded-full bg-[#00ff41] animate-pulse"></span>
+                <span>Active Scanner</span>
+              </div>
             </div>
             <p className="text-[#c0c0c0] leading-relaxed text-[11px]">
               • Send only <strong className="text-white">{selectedCrypto}</strong> ({config.network}) to this address.
               <br />
-              • Deposits are credited instantly on <strong className="text-white">{config.confirmationsNeeded} network confirmation(s)</strong> and automatically converted to live USD balance.
+              • Real blockchain deposits are detected via public mempool APIs and automatically converted to your live USD balance.
             </p>
+
+            {/* Manual Check Live On-Chain Deposits Button */}
+            <div className="pt-2 border-t border-[#c0c0c0]/15 flex flex-col gap-2">
+              <button
+                id="check-live-deposit-btn"
+                onClick={() => handleCheckLiveOnChain(false)}
+                disabled={isCheckingLive}
+                className="w-full py-2.5 px-4 rounded-xl bg-[#1a2b4b] hover:bg-[#00ff41] text-[#00ff41] hover:text-black border border-[#00ff41]/40 font-black uppercase tracking-wider text-xs flex items-center justify-center gap-2 transition-all shadow-md active:scale-[0.98] disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isCheckingLive ? 'animate-spin' : ''}`} />
+                <span>{isCheckingLive ? 'Scanning Blockchain...' : '🔄 Check Live On-Chain Deposits'}</span>
+              </button>
+
+              {liveCheckStatus && (
+                <div className="p-2.5 rounded-xl bg-[#0a122a] border border-[#00ff41]/30 text-[#00ff41] text-xs text-center font-mono animate-in fade-in duration-150">
+                  {liveCheckStatus}
+                </div>
+              )}
+            </div>
           </div>
 
         </div>

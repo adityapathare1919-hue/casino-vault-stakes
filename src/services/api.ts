@@ -49,6 +49,23 @@ export const api = {
     return res.json();
   },
 
+  // Trigger live on-chain blockchain deposit scan
+  async checkLiveDeposits(userId?: string): Promise<{
+    success: boolean;
+    creditedCount: number;
+    credited: Transaction[];
+    updatedBalanceUsd: number;
+    user: UserProfile;
+  }> {
+    const res = await fetch('/api/deposit/check-live', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }),
+    });
+    if (!res.ok) throw new Error('Failed to scan live blockchain');
+    return res.json();
+  },
+
   // Simulate crypto deposit
   async simulateDeposit(symbol: CryptoSymbol, amount: number, userId?: string): Promise<{
     success: boolean;

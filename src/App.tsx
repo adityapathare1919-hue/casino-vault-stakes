@@ -141,8 +141,51 @@ export default function App() {
     fetchLivePrices();
     const priceInterval = setInterval(fetchLivePrices, 10000);
 
-    return () => clearInterval(priceInterval);
-  }, []);
+    // Periodic live balance & deposit status sync every 6 seconds
+    const syncUserBalance = async () => {
+      try {
+        const data = await api.getUser(user.id);
+        if (data && data.user) {
+          setUser((prev) => ({
+            ...prev,
+            balanceUsd: data.user.balanceUsd,
+            cryptoBalances: data.user.cryptoBalances || prev.cryptoBalances,
+            totalWageredUsd: data.user.totalWageredUsd,
+            totalDepositedUsd: data.user.totalDepositedUsd,
+            totalWithdrawnUsd: data.user.totalWithdrawnUsd,
+            rakebackEarnedUsd: data.user.rakebackEarnedUsd,
+            rakebackClaimedUsd: data.user.rakebackClaimedUsd,
+            vipTier: data.user.vipTier,
+            nonce: data.user.nonce,
+          }));
+        }
+      } catch (e) {}
+    };
+
+    const userSyncInterval = setInterval(syncUserBalance, 6000);
+
+    return () => {
+      clearInterval(priceInterval);
+      clearInterval(userSyncInterval);
+    };
+  }, [user.id]);
+
+  const handleCheckLiveDeposits = async () => {
+    try {
+      const res = await api.checkLiveDeposits(user.id);
+      if (res && res.user) {
+        setUser((prev) => ({
+          ...prev,
+          balanceUsd: res.user.balanceUsd,
+          totalDepositedUsd: res.user.totalDepositedUsd,
+          cryptoBalances: res.user.cryptoBalances || prev.cryptoBalances,
+        }));
+      }
+      return res;
+    } catch (e: any) {
+      throw e;
+    }
+  };
 
   const handleBalanceUpdate = (newBalanceUsd: number) => {
     setUser((prev) => ({ ...prev, balanceUsd: newBalanceUsd }));
@@ -272,6 +315,7 @@ export default function App() {
         user={user}
         prices={prices}
         onSimulateDeposit={handleSimulateDeposit}
+        onCheckLiveDeposits={handleCheckLiveDeposits}
       />
 
       <WithdrawModal
