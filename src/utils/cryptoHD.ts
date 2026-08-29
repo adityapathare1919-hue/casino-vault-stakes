@@ -275,6 +275,122 @@ export function formatUsd(amount: number): string {
   }).format(amount);
 }
 
+export interface TransferNetwork {
+  id: string;
+  name: string;
+  shortName: string;
+  protocol: string;
+  confirmationTime: string;
+  confirmations: number;
+  feeUsd: number;
+  isRecommended?: boolean;
+}
+
+export const CRYPTO_NETWORKS: Record<CryptoSymbol, TransferNetwork[]> = {
+  USDT: [
+    { id: 'TRC20', name: 'TRON (TRC20)', shortName: 'TRC20', protocol: 'TRC-20', confirmationTime: '~1 min', confirmations: 1, feeUsd: 0, isRecommended: true },
+    { id: 'ERC20', name: 'Ethereum (ERC20)', shortName: 'ERC20', protocol: 'ERC-20', confirmationTime: '~2 mins', confirmations: 3, feeUsd: 0 },
+    { id: 'BEP20', name: 'BNB Smart Chain (BEP20)', shortName: 'BEP20', protocol: 'BEP-20', confirmationTime: '~30 sec', confirmations: 1, feeUsd: 0 },
+    { id: 'SOL', name: 'Solana (SPL)', shortName: 'Solana', protocol: 'SPL', confirmationTime: '~5 sec', confirmations: 1, feeUsd: 0 },
+    { id: 'Polygon', name: 'Polygon (MATIC)', shortName: 'Polygon', protocol: 'ERC-20', confirmationTime: '~1 min', confirmations: 1, feeUsd: 0 },
+    { id: 'Arbitrum', name: 'Arbitrum One (L2)', shortName: 'Arbitrum', protocol: 'Arbitrum', confirmationTime: '~15 sec', confirmations: 1, feeUsd: 0 },
+  ],
+  BTC: [
+    { id: 'NativeSegWit', name: 'Native SegWit (bech32)', shortName: 'Native SegWit', protocol: 'BIP-84', confirmationTime: '~10 mins', confirmations: 1, feeUsd: 0, isRecommended: true },
+    { id: 'Taproot', name: 'Taproot (bech32m)', shortName: 'Taproot', protocol: 'BIP-86', confirmationTime: '~10 mins', confirmations: 1, feeUsd: 0 },
+    { id: 'Legacy', name: 'Legacy (P2PKH)', shortName: 'Legacy', protocol: 'BIP-44', confirmationTime: '~10 mins', confirmations: 1, feeUsd: 0 },
+  ],
+  ETH: [
+    { id: 'Mainnet', name: 'Ethereum Mainnet (ERC20)', shortName: 'Mainnet', protocol: 'ERC-20', confirmationTime: '~2 mins', confirmations: 3, feeUsd: 0, isRecommended: true },
+    { id: 'Arbitrum', name: 'Arbitrum One (L2)', shortName: 'Arbitrum', protocol: 'Arbitrum', confirmationTime: '~15 sec', confirmations: 1, feeUsd: 0 },
+    { id: 'Base', name: 'Base (L2)', shortName: 'Base', protocol: 'Base', confirmationTime: '~15 sec', confirmations: 1, feeUsd: 0 },
+    { id: 'Optimism', name: 'Optimism (OP)', shortName: 'Optimism', protocol: 'Optimism', confirmationTime: '~15 sec', confirmations: 1, feeUsd: 0 },
+  ],
+  LTC: [
+    { id: 'NativeSegWit', name: 'Litecoin Native SegWit (ltc1q...)', shortName: 'Native SegWit', protocol: 'BIP-84', confirmationTime: '~2.5 mins', confirmations: 2, feeUsd: 0, isRecommended: true },
+    { id: 'Legacy', name: 'Litecoin Legacy (L...)', shortName: 'Legacy', protocol: 'BIP-44', confirmationTime: '~2.5 mins', confirmations: 2, feeUsd: 0 },
+  ],
+  SOL: [
+    { id: 'Solana', name: 'Solana Mainnet (SPL)', shortName: 'Mainnet', protocol: 'SPL', confirmationTime: '~5 sec', confirmations: 1, feeUsd: 0, isRecommended: true },
+  ],
+};
+
+export function deriveNetworkAddress(
+  symbol: CryptoSymbol,
+  networkId: string,
+  userId: string | number,
+  derivationIndex: number = 0,
+  seedPhrase: string = DEFAULT_MASTER_SEED
+): string {
+  const seed = getSeedFromPhrase(seedPhrase);
+  const index = Math.max(1, derivationIndex + 1);
+
+  if (symbol === 'LTC') {
+    if (networkId === 'Legacy') {
+      const root = ethers.HDNodeWallet.fromSeed(seed);
+      const child = root.derivePath(`m/44'/2'/0'/0/${index}`);
+      const pubKeyBytes = ethers.getBytes(child.publicKey);
+      const sha = ethers.getBytes(ethers.sha256(pubKeyBytes));
+      const hash160 = ethers.getBytes(ethers.ripemd160(sha));
+      const payload = new Uint8Array(21);
+      payload[0] = 0x30; // 'L' prefix for Litecoin Legacy
+      payload.set(hash160, 1);
+      const chk = ethers.getBytes(ethers.sha256(ethers.getBytes(ethers.sha256(payload)))).slice(0, 4);
+      const full = new Uint8Array(25);
+      full.set(payload, 0);
+      full.set(chk, 21);
+      return ethers.encodeBase58(full);
+    }
+    return deriveLtcAddress(seed, index);
+  }
+
+  if (symbol === 'BTC') {
+    if (networkId === 'Legacy') {
+      const root = ethers.HDNodeWallet.fromSeed(seed);
+      const child = root.derivePath(`m/44'/0'/0'/0/${index}`);
+      const pubKeyBytes = ethers.getBytes(child.publicKey);
+      const sha = ethers.getBytes(ethers.sha256(pubKeyBytes));
+      const hash160 = ethers.getBytes(ethers.ripemd160(sha));
+      const payload = new Uint8Array(21);
+      payload[0] = 0x00; // '1' prefix for Bitcoin Legacy
+      payload.set(hash160, 1);
+      const chk = ethers.getBytes(ethers.sha256(ethers.getBytes(ethers.sha256(payload)))).slice(0, 4);
+      const full = new Uint8Array(25);
+      full.set(payload, 0);
+      full.set(chk, 21);
+      return ethers.encodeBase58(full);
+    }
+    return deriveBtcAddress(seed, index);
+  }
+
+  if (symbol === 'USDT') {
+    if (networkId === 'TRC20') {
+      const root = ethers.HDNodeWallet.fromSeed(seed);
+      const child = root.derivePath(`m/44'/195'/0'/0/${index}`);
+      const ethAddrHex = child.address.replace('0x', '');
+      const addrBytes = ethers.getBytes('0x' + ethAddrHex);
+      const payload = new Uint8Array(21);
+      payload[0] = 0x41; // 'T' prefix for TRON
+      payload.set(addrBytes, 1);
+      const chk = ethers.getBytes(ethers.sha256(ethers.getBytes(ethers.sha256(payload)))).slice(0, 4);
+      const full = new Uint8Array(25);
+      full.set(payload, 0);
+      full.set(chk, 21);
+      return ethers.encodeBase58(full);
+    }
+    if (networkId === 'SOL') {
+      return deriveSolAddress(seed, index);
+    }
+    return deriveEthAddress(seed, index);
+  }
+
+  if (symbol === 'SOL') {
+    return deriveSolAddress(seed, index);
+  }
+
+  return deriveEthAddress(seed, index);
+}
+
 // Generate transaction hash
 export function generateTxHash(symbol: CryptoSymbol): string {
   const chars = '0123456789abcdef';

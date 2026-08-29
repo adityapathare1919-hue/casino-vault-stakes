@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CryptoSymbol, UserProfile } from '../types';
-import { CRYPTO_CONFIGS, formatUsd, formatCryptoAmount } from '../utils/cryptoHD';
-import { X, Copy, Check, QrCode, ArrowDownRight, RefreshCw, Zap, Shield, ExternalLink } from 'lucide-react';
+import { CRYPTO_CONFIGS, CRYPTO_NETWORKS, deriveNetworkAddress, formatUsd, formatCryptoAmount } from '../utils/cryptoHD';
+import { X, Copy, Check, QrCode, ArrowDownRight, RefreshCw, Zap, Shield, Globe, Clock, CheckCircle2 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { sound } from '../utils/audio';
 import confetti from 'canvas-confetti';
@@ -24,6 +24,7 @@ export const DepositModal: React.FC<DepositModalProps> = ({
   onCheckLiveDeposits,
 }) => {
   const [selectedCrypto, setSelectedCrypto] = useState<CryptoSymbol>('USDT');
+  const [selectedNetwork, setSelectedNetwork] = useState<string>('TRC20');
   const [copied, setCopied] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
   const [simulationStep, setSimulationStep] = useState<string | null>(null);
@@ -34,8 +35,20 @@ export const DepositModal: React.FC<DepositModalProps> = ({
 
   const cryptos: CryptoSymbol[] = ['USDT', 'BTC', 'ETH', 'LTC', 'SOL'];
   const config = CRYPTO_CONFIGS[selectedCrypto];
-  const childAddressInfo = user.childAddresses[selectedCrypto];
+  const availableNetworks = CRYPTO_NETWORKS[selectedCrypto] || [];
   const currentPrice = prices[selectedCrypto] || config.currentPriceUsd;
+
+  // Derive address for selected crypto + network
+  const activeDepositAddress = deriveNetworkAddress(selectedCrypto, selectedNetwork, user.id);
+  const activeNetworkConfig = availableNetworks.find((n) => n.id === selectedNetwork) || availableNetworks[0];
+
+  // When selected crypto changes, reset selected network to the recommended or first one
+  useEffect(() => {
+    const defaultNet = availableNetworks.find((n) => n.isRecommended) || availableNetworks[0];
+    if (defaultNet) {
+      setSelectedNetwork(defaultNet.id);
+    }
+  }, [selectedCrypto]);
 
   // Live on-chain deposit checker handler
   const handleCheckLiveOnChain = async (silent = false) => {
@@ -82,12 +95,12 @@ export const DepositModal: React.FC<DepositModalProps> = ({
     }
   }, [isOpen, onCheckLiveDeposits]);
 
-  // Generate QR Code on canvas
+  // Generate QR Code on canvas whenever crypto, network, or address changes
   useEffect(() => {
-    if (isOpen && qrCanvasRef.current && childAddressInfo?.address) {
+    if (isOpen && qrCanvasRef.current && activeDepositAddress) {
       QRCode.toCanvas(
         qrCanvasRef.current,
-        childAddressInfo.address,
+        activeDepositAddress,
         {
           width: 180,
           margin: 1,
@@ -101,7 +114,7 @@ export const DepositModal: React.FC<DepositModalProps> = ({
         }
       );
     }
-  }, [isOpen, selectedCrypto, childAddressInfo]);
+  }, [isOpen, selectedCrypto, selectedNetwork, activeDepositAddress]);
 
   // Set default simulation amounts based on crypto
   useEffect(() => {
@@ -117,47 +130,11 @@ export const DepositModal: React.FC<DepositModalProps> = ({
   if (!isOpen) return null;
 
   const handleCopy = () => {
-    if (childAddressInfo?.address) {
-      navigator.clipboard.writeText(childAddressInfo.address);
+    if (activeDepositAddress) {
+      navigator.clipboard.writeText(activeDepositAddress);
       setCopied(true);
       sound.playClick();
       setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  const handleRunSimulation = async () => {
-    try {
-      setIsSimulating(true);
-      setSimulationStep('Broadcasting transaction to blockchain...');
-      sound.playClick();
-
-      await new Promise((r) => setTimeout(r, 600));
-      setSimulationStep('Detecting incoming unconfirmed UTXO/Transfer on Child Address...');
-      
-      await new Promise((r) => setTimeout(r, 800));
-      setSimulationStep('Validating 3/3 confirmations & Converting rate to USD...');
-      
-      await new Promise((r) => setTimeout(r, 800));
-      setSimulationStep('Crediting Vault Stakes USD Balance & Sweeping to Master Vault...');
-      
-      const res = await onSimulateDeposit(selectedCrypto, customSimAmount);
-      
-      sound.playDepositSound();
-      confetti({
-        particleCount: 50,
-        spread: 60,
-        origin: { y: 0.6 },
-        colors: ['#10b981', '#34d399', '#6ee7b7'],
-      });
-
-      setSimulationStep(`✅ Deposit Successful! +${customSimAmount} ${selectedCrypto} (+$${(customSimAmount * currentPrice).toFixed(2)} USD)`);
-      setTimeout(() => {
-        setIsSimulating(false);
-        setSimulationStep(null);
-      }, 2500);
-    } catch (err: any) {
-      setIsSimulating(false);
-      setSimulationStep(`❌ Error: ${err.message}`);
     }
   };
 
@@ -165,7 +142,7 @@ export const DepositModal: React.FC<DepositModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
       <div 
         id="deposit-modal-container" 
-        className="relative w-full max-w-lg bg-[#0a122a] border border-[#c0c0c0]/30 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        className="relative w-full max-w-lg bg-[#0a122a] border border-[#c0c0c0]/30 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]"
       >
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-[#c0c0c0]/20 bg-[#050b18]">
@@ -177,7 +154,7 @@ export const DepositModal: React.FC<DepositModalProps> = ({
               <h2 className="text-base sm:text-lg font-black text-white uppercase tracking-wider font-['Syne',sans-serif]">
                 Deposit Crypto
               </h2>
-              <p className="text-xs text-[#c0c0c0]">Instant deposit with automatic USD conversion</p>
+              <p className="text-xs text-[#c0c0c0]">Choose currency & transfer network for instant deposit</p>
             </div>
           </div>
           <button
@@ -190,11 +167,11 @@ export const DepositModal: React.FC<DepositModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div className="p-5 sm:p-6 overflow-y-auto space-y-5 text-xs sm:text-sm">
-          {/* Crypto Selector Chips */}
+        <div className="p-5 sm:p-6 overflow-y-auto space-y-4 text-xs sm:text-sm">
+          {/* Step 1: Crypto Selector Menu */}
           <div>
             <label className="block text-xs font-bold text-[#c0c0c0] mb-2 uppercase tracking-wider">
-              Select Currency
+              1. Select Cryptocurrency
             </label>
             <div className="grid grid-cols-5 gap-2">
               {cryptos.map((sym) => {
@@ -207,7 +184,7 @@ export const DepositModal: React.FC<DepositModalProps> = ({
                     onClick={() => { setSelectedCrypto(sym); sound.playClick(); }}
                     className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border transition-all ${
                       isSelected
-                        ? 'bg-[#1a2b4b] border-[#00ff41] shadow-[0_0_15px_rgba(0,255,65,0.25)] text-white'
+                        ? 'bg-[#1a2b4b] border-[#00ff41] shadow-[0_0_15px_rgba(0,255,65,0.25)] text-white scale-[1.02]'
                         : 'bg-[#050b18] border-[#c0c0c0]/20 hover:border-[#00ff41]/40 text-[#c0c0c0]'
                     }`}
                   >
@@ -227,31 +204,76 @@ export const DepositModal: React.FC<DepositModalProps> = ({
             </div>
           </div>
 
+          {/* Step 2: Transfer Network Selection Menu */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-bold text-[#c0c0c0] uppercase tracking-wider flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-[#00ff41]" />
+                <span>2. Select Transfer Network</span>
+              </label>
+              <span className="text-[11px] text-[#00ff41] font-mono font-bold">
+                {availableNetworks.length} {availableNetworks.length === 1 ? 'Network' : 'Networks Available'}
+              </span>
+            </div>
+            
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {availableNetworks.map((net) => {
+                const isSelected = selectedNetwork === net.id;
+                return (
+                  <button
+                    key={net.id}
+                    id={`deposit-network-select-${net.id}`}
+                    type="button"
+                    onClick={() => { setSelectedNetwork(net.id); sound.playClick(); }}
+                    className={`p-2.5 rounded-xl border text-left transition-all relative ${
+                      isSelected
+                        ? 'bg-[#1a2b4b] border-[#00ff41] text-white shadow-[0_0_12px_rgba(0,255,65,0.2)]'
+                        : 'bg-[#050b18] border-[#c0c0c0]/20 hover:border-[#00ff41]/40 text-[#c0c0c0]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <span className="font-black text-xs text-white">{net.shortName}</span>
+                      {net.isRecommended && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] bg-[#00ff41]/20 text-[#00ff41] font-bold">
+                          Fastest
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-[#c0c0c0]">
+                      <span className="font-mono">{net.confirmationTime}</span>
+                      <span className="text-[#00ff41] font-bold">$0 Fee</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Network & Live Rate Banner */}
           <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-2xl bg-[#050b18] border border-[#c0c0c0]/20 text-xs">
             <div className="flex items-center gap-1.5">
-              <span className="text-[#c0c0c0] font-bold">Network:</span>
-              <span className="font-bold text-[#00ff41]">{config.network}</span>
+              <span className="text-[#c0c0c0] font-bold">Selected:</span>
+              <span className="font-bold text-[#00ff41]">{selectedCrypto} ({activeNetworkConfig?.name || selectedNetwork})</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="text-[#c0c0c0] font-bold">Live Rate:</span>
+              <span className="text-[#c0c0c0] font-bold">Rate:</span>
               <span className="font-bold text-white font-mono">1 {selectedCrypto} = {formatUsd(currentPrice)}</span>
             </div>
           </div>
 
           {/* QR Code & Address Display */}
-          <div className="flex flex-col items-center justify-center p-5 rounded-2xl bg-[#050b18] border border-[#c0c0c0]/20 shadow-inner">
+          <div className="flex flex-col items-center justify-center p-4 sm:p-5 rounded-2xl bg-[#050b18] border border-[#c0c0c0]/20 shadow-inner">
             <div className="p-3 bg-white rounded-2xl shadow-xl border border-slate-300 mb-3">
               <canvas ref={qrCanvasRef} className="rounded-xl"></canvas>
             </div>
 
             <div className="w-full">
               <div className="flex items-center justify-between text-xs text-[#c0c0c0] mb-1.5">
-                <span className="font-bold">Your Deposit Address:</span>
-                <span className="font-mono text-[10px] text-[#00ff41] font-bold">{config.network}</span>
+                <span className="font-bold">{selectedCrypto} Deposit Address ({activeNetworkConfig?.shortName}):</span>
+                <span className="font-mono text-[10px] text-[#00ff41] font-bold">{activeNetworkConfig?.protocol}</span>
               </div>
               <div className="flex items-center gap-2 p-2.5 rounded-xl bg-[#0a122a] border border-[#c0c0c0]/20 font-mono text-xs text-white break-all">
-                <span className="flex-1 select-all">{childAddressInfo?.address}</span>
+                <span className="flex-1 select-all font-mono font-bold text-[#00ff41]">{activeDepositAddress}</span>
                 <button
                   id="copy-deposit-address-btn"
                   onClick={handleCopy}
@@ -281,9 +303,9 @@ export const DepositModal: React.FC<DepositModalProps> = ({
               </div>
             </div>
             <p className="text-[#c0c0c0] leading-relaxed text-[11px]">
-              • Send only <strong className="text-white">{selectedCrypto}</strong> ({config.network}) to this address.
+              • Send only <strong className="text-white">{selectedCrypto}</strong> via <strong className="text-[#00ff41]">{activeNetworkConfig?.name || selectedNetwork}</strong> to this address.
               <br />
-              • Real blockchain deposits are detected via public mempool APIs and automatically converted to your live USD balance.
+              • Real blockchain deposits are detected via live mempool monitors and automatically converted to your USD balance.
             </p>
 
             {/* Manual Check Live On-Chain Deposits Button */}
@@ -311,3 +333,4 @@ export const DepositModal: React.FC<DepositModalProps> = ({
     </div>
   );
 };
+

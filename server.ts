@@ -1903,19 +1903,19 @@ async function handleTelegramUpdate(update: any) {
     }
 
     // =========================================================
-    // 3. TEXT COMMAND ROUTING (NO UNNECESSARY BUTTONS)
+    // 3. TEXT COMMAND ROUTING (MINIMAL CLEAN TEXT, NO UNNECESSARY BUTTONS)
     // =========================================================
 
     // --- /start or /help ---
     if (normalized === '/start' || normalized === '/help' || normalized === 'start' || normalized === 'help') {
       const welcome = `🎰 *Vault Stakes*\n• *Balance:* *$${user.balanceUsd.toFixed(2)} USD*\n\n` +
         `*Commands:*\n` +
-        `• \`/mines <amount> [mines]\` (e.g. \`/mines 0.16$\`, \`/mines 0.50 5\`)\n` +
-        `• \`/towers <amount> [diff]\` (e.g. \`/towers 0.16$\`, \`/towers 1 hard\`)\n` +
-        `• \`/deposit [crypto]\` (BTC, ETH, LTC, SOL, USDT)\n` +
+        `• \`/mines <amount> [mines]\`\n` +
+        `• \`/towers <amount> [diff]\`\n` +
+        `• \`/deposit [crypto] [network]\` (LTC, USDT, BTC, ETH, SOL)\n` +
         `• \`/balance\`\n` +
         `• \`/withdraw <amount> <crypto> <address>\`\n\n` +
-        `_You can also just send \`0.16$\` to start Mines!_`;
+        `_Enter any bet amount directly below or in the command to play instantly._`;
 
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
@@ -1936,7 +1936,7 @@ async function handleTelegramUpdate(update: any) {
         `• *Balance:* *$${user.balanceUsd.toFixed(2)} USD*\n` +
         `• *Wagered:* $${user.totalWageredUsd.toFixed(2)} USD\n` +
         `• *VIP:* ${user.vipTier}\n\n` +
-        `_Send \`/mines 0.16$\` or \`/towers 0.16$\` to play._`;
+        `_Send \`/mines <amount>\` or \`/towers <amount>\` to play._`;
 
       await callTelegramApi('sendMessage', {
         chat_id: chatId,
@@ -1950,18 +1950,35 @@ async function handleTelegramUpdate(update: any) {
     if (normalized.startsWith('/deposit') || normalized === 'deposit') {
       const parts = normalized.split(/\s+/);
       const sym = (parts[1] || 'LTC').toUpperCase();
+      const netParam = parts[2] || (sym === 'USDT' ? 'TRC20' : sym === 'LTC' ? 'Native SegWit' : 'Mainnet');
       const addr = deriveChildAddressServer(sym, user.id);
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(addr)}`;
 
-      const depText = `📥 *${sym} Deposit Address*\n\n` +
+      const depCaption = `📥 *${sym} Deposit Address (${netParam})*\n\n` +
         `\`${addr}\`\n\n` +
-        `• Send ${sym} to this address. Instantly credited to USD balance upon network confirmation.\n` +
-        `• Other coins: \`/deposit BTC\`, \`/deposit ETH\`, \`/deposit SOL\`, \`/deposit USDT\``;
+        `• *Network:* ${netParam}\n` +
+        `• *Rate:* 1 ${sym} = $${(cryptoPrices[sym] || 1).toFixed(2)} USD\n` +
+        `• Scan the QR code or copy the address above. Auto-credited on confirmation.\n\n` +
+        `_Options: \`/deposit LTC\`, \`/deposit USDT TRC20\`, \`/deposit BTC\`, \`/deposit ETH\`, \`/deposit SOL\`_`;
 
-      await callTelegramApi('sendMessage', {
-        chat_id: chatId,
-        text: depText,
-        parse_mode: 'Markdown',
-      });
+      // Attempt to send photo with QR code, fallback to text message
+      try {
+        const photoRes = await callTelegramApi('sendPhoto', {
+          chat_id: chatId,
+          photo: qrUrl,
+          caption: depCaption,
+          parse_mode: 'Markdown',
+        });
+        if (!photoRes || !photoRes.ok) {
+          throw new Error('Photo failed');
+        }
+      } catch {
+        await callTelegramApi('sendMessage', {
+          chat_id: chatId,
+          text: depCaption,
+          parse_mode: 'Markdown',
+        });
+      }
       return;
     }
 
@@ -2055,7 +2072,7 @@ async function handleTelegramUpdate(update: any) {
       if (!betParam || cmdStr === '/mines') {
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: `💣 *Mines*\nEnter your bet amount to play:\n• \`/mines 0.16$\` (or send \`0.16$\`)\n• \`/mines 0.50 5\` (amount & mine count)\n• Balance: *$${user.balanceUsd.toFixed(2)} USD*`,
+          text: `💣 *Mines*\nEnter your bet amount to play:\n• \`/mines <amount>\` (or send amount directly)\n• \`/mines <amount> [mines]\` (e.g. \`/mines 1 5\`)\n• Balance: *$${user.balanceUsd.toFixed(2)} USD*`,
           parse_mode: 'Markdown',
         });
         return;
@@ -2065,7 +2082,7 @@ async function handleTelegramUpdate(update: any) {
       if (isNaN(parsedBet) || parsedBet <= 0) {
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: `❌ Invalid bet amount. Example: \`/mines 0.16$\``,
+          text: `❌ Invalid bet amount. Usage: \`/mines <amount>\``,
           parse_mode: 'Markdown',
         });
         return;
@@ -2142,7 +2159,7 @@ async function handleTelegramUpdate(update: any) {
       if (!betParam || cmdStr === '/towers') {
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: `🏰 *Towers*\nEnter your bet amount to play:\n• \`/towers 0.16$\`\n• \`/towers 0.50 medium\` (easy|medium|hard)\n• Balance: *$${user.balanceUsd.toFixed(2)} USD*`,
+          text: `🏰 *Towers*\nEnter your bet amount to play:\n• \`/towers <amount>\`\n• \`/towers <amount> [easy|medium|hard]\`\n• Balance: *$${user.balanceUsd.toFixed(2)} USD*`,
           parse_mode: 'Markdown',
         });
         return;
@@ -2152,7 +2169,7 @@ async function handleTelegramUpdate(update: any) {
       if (isNaN(parsedBet) || parsedBet <= 0) {
         await callTelegramApi('sendMessage', {
           chat_id: chatId,
-          text: `❌ Invalid bet amount. Example: \`/towers 0.16$\``,
+          text: `❌ Invalid bet amount. Usage: \`/towers <amount>\``,
           parse_mode: 'Markdown',
         });
         return;
